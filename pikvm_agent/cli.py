@@ -27,7 +27,18 @@ def cmd_status(client: PiKvmClient, args: argparse.Namespace) -> int:
         _, content_type = client.get_bytes("/api/streamer/snapshot")
         snapshot = "available" if content_type.startswith("image/") else f"unexpected ({content_type})"
     except PiKvmError as e:
-        snapshot = f"unavailable ({e})"
+        # kvmd suspends the streamer with no KVM client attached; `screenshot`
+        # wakes it via /api/ws, so this is not a hard failure.
+        snapshot = "suspended (resumes on capture)" if "503" in str(e) else f"unavailable ({e})"
+
+    try:
+        hid = client._get_json("/api/hid").get("result", {})
+    except PiKvmError:
+        hid = {}
+    kbd_online = hid.get("keyboard", {}).get("online")
+    mouse = hid.get("mouse", {})
+    mouse_online = mouse.get("online")
+    mouse_mode = "absolute" if mouse.get("absolute") else "relative"
 
     platform = info.get("hw", {}).get("platform", {})
     meta_host = info.get("meta", {}).get("server", {}).get("host", "?")
@@ -37,8 +48,14 @@ def cmd_status(client: PiKvmClient, args: argparse.Namespace) -> int:
     print(f"url:          {client.config.base_url}")
     print(f"atx:          enabled={atx.get('enabled')} power_led={'on' if leds.get('power') else 'off'}")
     print(f"snapshot:     {snapshot}")
+    print(f"keyboard:     {'online' if kbd_online else 'OFFLINE'}")
+    print(f"mouse:        {'online' if mouse_online else 'OFFLINE'} ({mouse_mode})")
+    if mouse_online is False:
+        print("  warning:    the host has not enumerated the USB mouse gadget; "
+              "mouse moves/clicks will not reach it until it comes online "
+              "(re-plug the OTG, reboot the host, or try the usb_rel output).")
     if args.json:
-        print(json.dumps({"info": info, "atx": atx, "snapshot": snapshot}, indent=2))
+        print(json.dumps({"info": info, "atx": atx, "hid": hid, "snapshot": snapshot}, indent=2))
     return EXIT_OK
 
 
@@ -60,6 +77,61 @@ def cmd_screenshot(client: PiKvmClient, args: argparse.Namespace) -> int:
     print(f"saved:      {path}")
     print(f"resolution: {snap.width}x{snap.height}")
     print(f"source:     {snap.source}")
+    return EXIT_OK
+
+
+def cmd_move(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import hid
+
+    client.ensure_auth()
+    hid.mouse_move(client, args.x, args.y)
+    print(f"moved to ({args.x}, {args.y})")
+    return EXIT_OK
+
+
+def cmd_click(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import hid
+
+    client.ensure_auth()
+    hid.click(client, args.button, args.x, args.y, double=args.double)
+    where = f" at ({args.x}, {args.y})" if args.x is not None else ""
+    print(f"{'double-' if args.double else ''}{args.button} click{where}")
+    return EXIT_OK
+
+
+def cmd_drag(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import hid
+
+    client.ensure_auth()
+    hid.drag(client, args.x1, args.y1, args.x2, args.y2)
+    print(f"dragged ({args.x1}, {args.y1}) -> ({args.x2}, {args.y2})")
+    return EXIT_OK
+
+
+def cmd_wheel(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import hid
+
+    client.ensure_auth()
+    hid.wheel(client, args.dy)
+    print(f"wheel {args.dy}")
+    return EXIT_OK
+
+
+def cmd_type(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import hid
+
+    client.ensure_auth()
+    path = hid.type_text(client, args.text)
+    print(f"typed {len(args.text)} chars via {path}")
+    return EXIT_OK
+
+
+def cmd_key(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import hid
+
+    client.ensure_auth()
+    keys = hid.press_combo(client, args.combo)
+    print(f"pressed {'+'.join(keys)}")
     return EXIT_OK
 
 
@@ -85,6 +157,37 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ocr", action="store_true",
                    help="print server-side OCR text of the frame instead of saving an image")
     p.set_defaults(func=cmd_screenshot)
+
+    p = sub.add_parser("move", help="move mouse to pixel coordinates")
+    p.add_argument("x", type=float)
+    p.add_argument("y", type=float)
+    p.set_defaults(func=cmd_move)
+
+    p = sub.add_parser("click", help="click a mouse button, optionally at pixel coordinates")
+    p.add_argument("button", nargs="?", default="left", choices=["left", "right", "middle"])
+    p.add_argument("x", nargs="?", type=float, default=None)
+    p.add_argument("y", nargs="?", type=float, default=None)
+    p.add_argument("--double", action="store_true")
+    p.set_defaults(func=cmd_click)
+
+    p = sub.add_parser("drag", help="left-drag between two pixel coordinates")
+    p.add_argument("x1", type=float)
+    p.add_argument("y1", type=float)
+    p.add_argument("x2", type=float)
+    p.add_argument("y2", type=float)
+    p.set_defaults(func=cmd_drag)
+
+    p = sub.add_parser("wheel", help="scroll: positive dy scrolls up, negative down")
+    p.add_argument("dy", type=int)
+    p.set_defaults(func=cmd_wheel)
+
+    p = sub.add_parser("type", help="type text on the target")
+    p.add_argument("text")
+    p.set_defaults(func=cmd_type)
+
+    p = sub.add_parser("key", help='press a key combo, e.g. "ctrl+alt+t", "meta", "enter"')
+    p.add_argument("combo")
+    p.set_defaults(func=cmd_key)
 
     return parser
 

@@ -91,3 +91,4 @@ def test_cli_status_mock(mock_device, capsys):
     out = capsys.readouterr().out
     assert "mock-pikvm" in out
     assert "snapshot:     available" in out
+    assert "mouse:        online" in out

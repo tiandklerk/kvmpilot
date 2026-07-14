@@ -8,6 +8,7 @@ to grabbing a single frame from the /stream MJPEG multipart stream.
 from __future__ import annotations
 
 import io
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,9 @@ from .client import PiKvmClient, PiKvmError
 from .config import STATE_DIR
 
 SCREENSHOT_DIR = STATE_DIR / "screenshots"
+RESOLUTION_CACHE = STATE_DIR / "resolution.json"
+
+WAKE_ATTEMPTS = 10  # 1s apart, while holding /api/ws open to resume the streamer
 
 
 @dataclass
@@ -42,24 +46,53 @@ def _dimensions(jpeg: bytes) -> tuple[int, int]:
         return img.size
 
 
-def capture(client: PiKvmClient) -> Snapshot:
+def _save_resolution(width: int, height: int) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    RESOLUTION_CACHE.write_text(json.dumps({"width": width, "height": height}))
+
+
+def _try_snapshot(client: PiKvmClient) -> bytes | None:
     try:
         body, content_type = client.get_bytes("/api/streamer/snapshot")
-        if content_type.startswith("image/"):
-            w, h = _dimensions(body)
-            return Snapshot(jpeg=body, width=w, height=h, source="snapshot")
-        raise PiKvmError(f"snapshot returned {content_type or 'no content-type'}")
-    except PiKvmError as snapshot_err:
+    except PiKvmError:
+        return None
+    return body if content_type.startswith("image/") else None
+
+
+def capture(client: PiKvmClient) -> Snapshot:
+    body = _try_snapshot(client)
+    source = "snapshot"
+
+    if body is None:
+        # kvmd suspends the streamer when no KVM client is connected and
+        # snapshot answers 503. Holding the /api/ws event socket open makes
+        # kvmd resume the streamer (verified on kvmd 4.132), so wake it and
+        # retry briefly.
+        try:
+            with client.open_ws():
+                for _ in range(WAKE_ATTEMPTS):
+                    time.sleep(1)
+                    body = _try_snapshot(client)
+                    if body is not None:
+                        source = "snapshot-wake"
+                        break
+        except Exception:
+            pass
+
+    if body is None:
         try:
             body = _grab_stream_frame(client)
+            source = "stream"
         except Exception as stream_err:
             raise PiKvmError(
-                f"no screen capture available: snapshot failed ({snapshot_err}); "
-                f"stream fallback failed ({stream_err}). "
+                "no screen capture available: snapshot failed (also after "
+                f"waking the streamer via /api/ws); stream fallback failed ({stream_err}). "
                 "On the PiKVM, `systemctl start kvmd-streamer` may be needed."
             ) from None
-        w, h = _dimensions(body)
-        return Snapshot(jpeg=body, width=w, height=h, source="stream")
+
+    w, h = _dimensions(body)
+    _save_resolution(w, h)
+    return Snapshot(jpeg=body, width=w, height=h, source=source)
 
 
 def capture_ocr(client: PiKvmClient) -> str:

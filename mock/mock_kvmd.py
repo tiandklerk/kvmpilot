@@ -48,6 +48,8 @@ class MockKvmd:
         self.events_file = events_file
         self.atx_power = True
         self.snapshot_enabled = True  # False simulates Janus-only mode (snapshot 404s)
+        self.mouse_online = True
+        self.keyboard_online = True
         frame = frame_file or DEFAULT_FRAME
         self.frame_bytes = frame.read_bytes() if frame.exists() else _make_fallback_frame()
 
@@ -96,6 +98,19 @@ class MockKvmd:
                 "meta": {"server": {"host": "mock-pikvm"}, "kvm": {}},
                 "hw": {"platform": {"base": "Mock v0", "model": "mock"}},
                 "system": {"kvmd": {"version": "mock-3.x"}},
+            },
+        })
+
+    async def hid(self, request: web.Request) -> web.Response:
+        if err := self._require_auth(request):
+            return err
+        return web.json_response({
+            "ok": True,
+            "result": {
+                "enabled": True, "busy": False,
+                "keyboard": {"online": self.keyboard_online, "leds": {}},
+                "mouse": {"online": self.mouse_online, "absolute": True,
+                          "outputs": {"active": "usb", "available": ["usb", "usb_rel"]}},
             },
         })
 
@@ -190,6 +205,7 @@ class MockKvmd:
         app.router.add_post("/api/auth/login", self.login)
         app.router.add_get("/api/auth/check", self.auth_check)
         app.router.add_get("/api/info", self.info)
+        app.router.add_get("/api/hid", self.hid)
         app.router.add_get("/api/atx", self.atx)
         app.router.add_post("/api/atx/click", self.atx_click)
         app.router.add_post("/api/hid/print", self.hid_print)
