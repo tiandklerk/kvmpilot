@@ -237,12 +237,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("token")
     p.set_defaults(func=cmd_confirm)
 
+    p = sub.add_parser("mcp", help="run the MCP server (stdio) for MCP-capable agents")
+    p.set_defaults(func=None)  # handled specially in main() before opening a client
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "mcp":
+        if args.mock:
+            import os
+
+            os.environ["PIKVM_MOCK"] = "1"  # propagate to the server's load_config()
+        from .mcp_server import main as mcp_main
+
+        mcp_main()
+        return EXIT_OK
     try:
         config = load_config(mock=args.mock)
     except ConfigError as e:
