@@ -11,6 +11,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import config as config_mod
 from . import guard
 from .client import PiKvmClient, PiKvmError
 from .config import ConfigError, load_config
@@ -169,6 +170,74 @@ def cmd_confirm(client: PiKvmClient, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _endpoint_from_args(args: argparse.Namespace) -> config_mod.Endpoint:
+    """Resolve host/user from --host/--user flags, else env/TOML."""
+    if args.host:
+        return config_mod.Endpoint(
+            host=args.host,
+            user=args.user or "admin",
+            use_ssl=not args.no_ssl,
+            port=args.port,
+        )
+    ep = config_mod.resolve_endpoint()
+    if args.user:
+        ep.user = args.user
+    return ep
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    """Store a kvmd password in the OS keyring and verify it connects."""
+    import getpass
+
+    if not config_mod.keyring_available():
+        print("error: the 'keyring' package is not installed, so there is no OS secret "
+              "store. Install it (pip install keyring) or use PIKVM_PASSWORD / the TOML "
+              "file.", file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        ep = _endpoint_from_args(args)
+    except ConfigError as e:
+        print(f"error: {e} (or pass --host/--user)", file=sys.stderr)
+        return EXIT_ERROR
+
+    password = args.password or getpass.getpass(f"kvmd password for {ep.user}@{ep.host}: ")
+    if not password:
+        print("error: empty password", file=sys.stderr)
+        return EXIT_ERROR
+
+    if not args.no_verify:
+        cfg = config_mod.Config(ep.host, ep.user, password, ep.use_ssl, ep.port)
+        try:
+            with PiKvmClient(cfg) as client:
+                client.ensure_auth()
+        except (PiKvmError, ConnectionError, OSError) as e:
+            print(f"error: credentials did not verify against {cfg.base_url}: {e}\n"
+                  "nothing stored. Re-run with --no-verify to store anyway.", file=sys.stderr)
+            return EXIT_ERROR
+
+    config_mod.set_stored_password(ep.host, ep.user, password)
+    print(f"stored password for {ep.user}@{ep.host} in the OS keyring"
+          f"{'' if args.no_verify else ' (verified)'}.")
+    if ep.file_password:
+        print(f"note: {config_mod.CONFIG_PATH} still has a plaintext `password` line; "
+              "remove it so the keyring is used.")
+    return EXIT_OK
+
+
+def cmd_logout(args: argparse.Namespace) -> int:
+    """Remove a stored password from the OS keyring."""
+    try:
+        ep = _endpoint_from_args(args)
+    except ConfigError as e:
+        print(f"error: {e} (or pass --host/--user)", file=sys.stderr)
+        return EXIT_ERROR
+    if config_mod.delete_stored_password(ep.host, ep.user):
+        print(f"removed keyring entry for {ep.user}@{ep.host}.")
+    else:
+        print(f"no keyring entry for {ep.user}@{ep.host}.")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pikvm",
@@ -240,6 +309,24 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("mcp", help="run the MCP server (stdio) for MCP-capable agents")
     p.set_defaults(func=None)  # handled specially in main() before opening a client
 
+    p = sub.add_parser("login", help="store a kvmd password in the OS keyring (recommended)")
+    p.add_argument("--host", default=None, help="override host (else uses env/TOML)")
+    p.add_argument("--user", default=None, help="override user (default admin)")
+    p.add_argument("--port", type=int, default=None)
+    p.add_argument("--no-ssl", action="store_true", help="target http instead of https")
+    p.add_argument("--password", default=None,
+                   help="password (omit to be prompted without echo — preferred)")
+    p.add_argument("--no-verify", action="store_true",
+                   help="store without first checking the password connects")
+    p.set_defaults(func=cmd_login)
+
+    p = sub.add_parser("logout", help="remove a stored password from the OS keyring")
+    p.add_argument("--host", default=None)
+    p.add_argument("--user", default=None)
+    p.add_argument("--port", type=int, default=None)
+    p.add_argument("--no-ssl", action="store_true")
+    p.set_defaults(func=cmd_logout)
+
     return parser
 
 
@@ -255,6 +342,12 @@ def main(argv: list[str] | None = None) -> int:
 
         mcp_main()
         return EXIT_OK
+    if args.command in ("login", "logout"):
+        try:
+            return args.func(args)
+        except ConfigError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return EXIT_ERROR
     try:
         config = load_config(mock=args.mock)
     except ConfigError as e:

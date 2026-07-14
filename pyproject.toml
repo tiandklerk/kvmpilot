@@ -8,6 +8,7 @@ dependencies = [
     "websockets>=12",
     "pillow>=10",
     "mcp>=1.0",
+    "keyring>=24",
 ]
 
 [project.optional-dependencies]

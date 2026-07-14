@@ -25,18 +25,32 @@ uv venv && uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
 
 ## Configure the device
 
-Credentials come from (in order) `--mock`, `PIKVM_*` env vars, then a config
-file. Create `~/.config/pikvm-agent/config.toml` (chmod 600):
+The connection endpoint (host/user/ssl/port) comes from, in order, `--mock`,
+`PIKVM_*` env vars, then `~/.config/pikvm-agent/config.toml`:
 
 ```toml
 host = "192.168.1.50"
 user = "admin"
-password = "..."
 use_ssl = true          # PiKVM ships self-signed certs; TLS verification is off
 # port = 443            # optional
+# password = "..."      # optional — prefer the OS keyring (see below)
 ```
 
-Or: `export PIKVM_HOST=… PIKVM_USER=… PIKVM_PASSWORD=…`
+The **password** is resolved separately so it needn't sit in plaintext, in
+order: `PIKVM_PASSWORD` env var → `password` in the TOML → **OS keyring**.
+The keyring (GNOME Keyring / KWallet / macOS Keychain / Windows Credential
+Manager, via the `keyring` package) is the recommended store:
+
+```bash
+pikvm login                  # prompts for the password, verifies, stores in the keyring
+pikvm logout                 # removes the stored password
+```
+
+With the password in the keyring you can omit the `password` line from the TOML
+entirely. If no secret-service daemon is available (e.g. a headless box with no
+keyring daemon running), the tool falls back to `PIKVM_PASSWORD` / the TOML
+file, and `pikvm login` reports the situation clearly rather than failing
+silently.
 
 ## CLI
 
@@ -51,6 +65,8 @@ pikvm type "hello world"     # type text (server-side keymap)
 pikvm key "ctrl+alt+t"       # press a combo; also: pikvm key enter
 pikvm atx power              # power control (guarded)
 pikvm confirm <TOKEN>        # approve a blocked action
+pikvm login                  # store the kvmd password in the OS keyring
+pikvm logout                 # remove it from the keyring
 pikvm mcp                    # run the MCP server over stdio
 ```
 

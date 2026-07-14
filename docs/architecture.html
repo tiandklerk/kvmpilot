@@ -2353,6 +2353,7 @@ export PIKVM_HOST=192.168.1.50 PIKVM_USER=admin PIKVM_PASSWORD=•••
     <tr><td><code>pikvm key "ctrl+alt+t"</code></td><td>Press a combo; also <code>pikvm key enter</code>. Guarded.</td></tr>
     <tr><td><code>pikvm atx power|power_long|reset</code></td><td>Power control. Always guarded.</td></tr>
     <tr><td><code>pikvm confirm &lt;TOKEN&gt;</code></td><td>Execute the pending guarded action after human approval.</td></tr>
+    <tr><td><code>pikvm login</code> / <code>logout</code></td><td>Store / remove the kvmd password in the OS keyring (recommended over a plaintext TOML).</td></tr>
     <tr><td><code>pikvm mcp</code></td><td>Start the MCP server over stdio.</td></tr>
   </tbody>
 </table>
@@ -2514,7 +2515,7 @@ screenshots as evidence for each step.</code></pre>
 
 <h2 id="security">13 · Security &amp; residual risk</h2>
 <ul>
-  <li><strong>Credentials</strong> live outside the repo — <code>~/.config/pikvm-agent/config.toml</code> (chmod 600) or <code>PIKVM_*</code> env vars. <code>.gitignore</code> covers config, <code>.env</code>, state and audit files.</li>
+  <li><strong>Credentials</strong> live outside the repo. The endpoint (host/user) sits in <code>~/.config/pikvm-agent/config.toml</code> or <code>PIKVM_*</code> env vars; the <strong>password</strong> is resolved separately — <code>PIKVM_PASSWORD</code> → TOML <code>password</code> → <strong>OS keyring</strong> (<code>pikvm login</code>). The keyring (GNOME Keyring / KWallet / Keychain / Credential Manager) is the recommended store, keeping the secret encrypted at rest instead of plaintext; the tool falls back gracefully to env/TOML where no secret-service daemon exists. <code>.gitignore</code> covers config, <code>.env</code>, state and audit files.</li>
   <li><strong>Audit trail:</strong> every input and power action is appended to <code>~/.local/state/pikvm-agent/audit.log</code>.</li>
   <li><strong>TLS:</strong> verification is disabled for the device's self-signed cert. Trust is scoped to the LAN path to the PiKVM; this is not an internet-facing tool.</li>
   <li class="warn"><strong>Residual evasion:</strong> an agent could type a dangerous command one character at a time via <code>key</code> events to dodge the text scanner. The Enter-evasion rolling buffer catches the common "type then Enter" case, and the audit log records everything — but treat the confirm-token gate as the real boundary and keep a human approving power actions.</li>
