@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import time
 
-from . import keymap
+from . import guard, keymap
 from .client import PiKvmClient, PiKvmError
 
 KEY_DELAY = 0.02   # seconds between HID events, mirroring pikonnect's pacing
@@ -95,10 +95,16 @@ def wheel(client: PiKvmClient, dy: int, dx: int = 0) -> None:
 
 # -- keyboard -----------------------------------------------------------------
 
-def type_text(client: PiKvmClient, text: str, force_ws: bool = False) -> str:
+def type_text(client: PiKvmClient, text: str, force_ws: bool = False,
+              confirm_token: str | None = None) -> str:
     """Type text on the target. Prefers server-side /api/hid/print (layout-
     aware, fast); falls back to per-key WebSocket events. Returns the path
-    used ("print" or "ws")."""
+    used ("print" or "ws"). Dangerous command text is gated by guardrails."""
+    danger = guard.scan_text(text)
+    if danger is not None:
+        guard.require_confirmation(f"type:{text}", danger.reason, confirm_token)
+    guard.record_typed(text)
+    guard.audit(f"type:{len(text)}chars", "executed", text[:80])
     if not force_ws:
         try:
             client.hid_print(text)
@@ -128,10 +134,22 @@ def _type_text_ws(client: PiKvmClient, text: str) -> None:
         time.sleep(FLUSH_DELAY)
 
 
-def press_combo(client: PiKvmClient, combo: str) -> list[str]:
+def press_combo(client: PiKvmClient, combo: str, confirm_token: str | None = None) -> list[str]:
     """Press a key combo like "ctrl+alt+del": press in order, release in
-    reverse. Returns the kvmd key codes used."""
+    reverse. Returns the kvmd key codes used. Power chords and an Enter that
+    would execute a dangerous typed command are gated by guardrails."""
     keys = keymap.parse_combo(combo)
+
+    danger = guard.scan_combo(keys)
+    if danger is None and keys == ["Enter"]:
+        danger = guard.enter_would_execute_danger()
+    if danger is not None:
+        guard.require_confirmation(f"key:{combo}", danger.reason, confirm_token)
+
+    if "Enter" in keys:
+        guard.clear_typed_buffer()  # command line submitted; reset the buffer
+    guard.audit(f"key:{combo}", "executed", "+".join(keys))
+
     with client.open_ws() as ws:
         for k in keys:
             ws.key(k, True)

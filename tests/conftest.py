@@ -58,12 +58,13 @@ class MockDevice:
 
 @pytest.fixture
 def mock_device(tmp_path, monkeypatch):
-    from pikvm_agent import screen
+    from pikvm_agent import config, screen
 
     device = MockDevice(tmp_path)
     monkeypatch.setenv("PIKVM_MOCK", "1")
     monkeypatch.setenv("PIKVM_MOCK_PORT", str(device.port))
-    # isolate per-test state (resolution cache, screenshots) from the user's real state dir
+    # isolate per-test state (resolution cache, screenshots, guard state) from the real dir
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(screen, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(screen, "SCREENSHOT_DIR", tmp_path / "state" / "screenshots")
     monkeypatch.setattr(screen, "RESOLUTION_CACHE", tmp_path / "state" / "resolution.json")

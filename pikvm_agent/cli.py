@@ -11,6 +11,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import guard
 from .client import PiKvmClient, PiKvmError
 from .config import ConfigError, load_config
 
@@ -121,7 +122,7 @@ def cmd_type(client: PiKvmClient, args: argparse.Namespace) -> int:
     from . import hid
 
     client.ensure_auth()
-    path = hid.type_text(client, args.text)
+    path = hid.type_text(client, args.text, confirm_token=args.confirm)
     print(f"typed {len(args.text)} chars via {path}")
     return EXIT_OK
 
@@ -130,8 +131,41 @@ def cmd_key(client: PiKvmClient, args: argparse.Namespace) -> int:
     from . import hid
 
     client.ensure_auth()
-    keys = hid.press_combo(client, args.combo)
+    keys = hid.press_combo(client, args.combo, confirm_token=args.confirm)
     print(f"pressed {'+'.join(keys)}")
+    return EXIT_OK
+
+
+def cmd_atx(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import atx
+
+    client.ensure_auth()
+    atx.click(client, args.button, confirm_token=args.confirm)
+    print(f"atx {args.button} sent")
+    return EXIT_OK
+
+
+def cmd_confirm(client: PiKvmClient, args: argparse.Namespace) -> int:
+    """Resolve a pending guarded action by re-dispatching it with the token."""
+    pending = guard.peek_pending()
+    if pending is None:
+        print("no pending action to confirm (it may have expired)", file=sys.stderr)
+        return EXIT_ERROR
+    action = pending["action"]
+    kind, _, payload = action.partition(":")
+    client.ensure_auth()
+    from . import atx, hid
+
+    if kind == "atx":
+        atx.click(client, payload, confirm_token=args.token)
+    elif kind == "type":
+        hid.type_text(client, payload, confirm_token=args.token)
+    elif kind == "key":
+        hid.press_combo(client, payload, confirm_token=args.token)
+    else:
+        print(f"unknown pending action kind {kind!r}", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"confirmed and executed: {pending['reason']}")
     return EXIT_OK
 
 
@@ -183,11 +217,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("type", help="type text on the target")
     p.add_argument("text")
+    p.add_argument("--confirm", metavar="TOKEN", default=None,
+                   help="token to authorize a previously blocked dangerous command")
     p.set_defaults(func=cmd_type)
 
     p = sub.add_parser("key", help='press a key combo, e.g. "ctrl+alt+t", "meta", "enter"')
     p.add_argument("combo")
+    p.add_argument("--confirm", metavar="TOKEN", default=None,
+                   help="token to authorize a blocked power chord / dangerous Enter")
     p.set_defaults(func=cmd_key)
+
+    p = sub.add_parser("atx", help="ATX power control (always guarded)")
+    p.add_argument("button", choices=["power", "power_long", "reset"])
+    p.add_argument("--confirm", metavar="TOKEN", default=None,
+                   help="token to authorize this power action")
+    p.set_defaults(func=cmd_atx)
+
+    p = sub.add_parser("confirm", help="execute the pending guarded action with its token")
+    p.add_argument("token")
+    p.set_defaults(func=cmd_confirm)
 
     return parser
 
@@ -203,6 +251,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with PiKvmClient(config) as client:
             return args.func(client, args)
+    except guard.GuardError as e:
+        print(f"\n{e}", file=sys.stderr)
+        print(f"\nTo proceed, a human must approve this. Confirm with:\n"
+              f"    pikvm{' --mock' if args.mock else ''} confirm {e.token}\n"
+              f"(token valid for {guard.TOKEN_TTL // 60} minutes)", file=sys.stderr)
+        return EXIT_BLOCKED
     except PiKvmError as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_ERROR
