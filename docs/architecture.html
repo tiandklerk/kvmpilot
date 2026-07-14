@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claudekvm — Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+    themeVariables: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } });
+</script>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c2230; --border: #2b3240;
+    --fg: #e6edf3; --muted: #9aa7b4; --accent: #58a6ff; --accent2: #3fb950;
+    --warn: #f0883e; --danger: #f85149; --code: #d2a8ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 24px 96px; }
+  header.hero {
+    border: 1px solid var(--border); border-radius: 14px; padding: 32px 34px;
+    background: linear-gradient(135deg, #161b22 0%, #1b2436 100%); margin-bottom: 40px;
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: 34px; letter-spacing: -0.5px; }
+  header.hero p { margin: 0; color: var(--muted); font-size: 17px; }
+  .pills { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill { font-size: 12.5px; padding: 4px 11px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
+  h2 { font-size: 24px; margin: 52px 0 14px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border); letter-spacing: -0.3px; }
+  h3 { font-size: 18px; margin: 30px 0 10px; color: var(--fg); }
+  p, li { color: #cdd6e0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em;
+    background: #12161d; border: 1px solid var(--border); border-radius: 5px;
+    padding: 1.5px 5px; color: var(--code); }
+  pre { background: #12161d; border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; }
+  pre code { background: none; border: none; padding: 0; color: #c9d1d9; }
+  .diagram { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px; margin: 18px 0; overflow-x: auto; }
+  .diagram .mermaid { display: flex; justify-content: center; min-width: 640px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px;
+    display: block; overflow-x: auto; }
+  th, td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); color: var(--fg); font-weight: 600; }
+  td { color: #cdd6e0; }
+  .note { border-left: 3px solid var(--accent); background: #10161f; padding: 12px 16px;
+    border-radius: 0 8px 8px 0; margin: 16px 0; color: #cdd6e0; }
+  .warn { border-left-color: var(--warn); background: #1a140c; }
+  .danger { border-left-color: var(--danger); background: #1c1010; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: var(--panel); }
+  .card h3 { margin-top: 0; }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 6px;
+    background: var(--panel2); border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
+  .rec { color: var(--accent2); font-weight: 600; }
+  .no { color: var(--danger); font-weight: 600; }
+  .maybe { color: var(--warn); font-weight: 600; }
+  a { color: var(--accent); }
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 13.5px; }
+  .toc { columns: 2; column-gap: 28px; font-size: 14.5px; }
+  .toc a { display: block; padding: 3px 0; color: var(--muted); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  @media (max-width: 700px) { .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>claudekvm</h1>
+  <p>An LLM-agent harness that operates a physical computer through a PiKVM — screen capture in, keyboard/mouse out — with dangerous-action guardrails. Exposed as a CLI and an MCP server.</p>
+  <div class="pills">
+    <span class="pill">Python 3.10+</span>
+    <span class="pill">httpx · websockets · Pillow · mcp</span>
+    <span class="pill">PiKVM / kvmd</span>
+    <span class="pill">CLI + MCP (stdio)</span>
+    <span class="pill">platform-agnostic host</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#overview">1 · Overview</a>
+  <a href="#components">2 · Component architecture</a>
+  <a href="#device">3 · Device contract</a>
+  <a href="#screen">4 · Screen capture</a>
+  <a href="#hid">5 · HID input &amp; coordinates</a>
+  <a href="#guard">6 · Guardrails</a>
+  <a href="#agentloop">7 · The agent loop</a>
+  <a href="#modules">8 · Module reference</a>
+  <a href="#models">9 · Recommended models</a>
+  <a href="#security">10 · Security &amp; residual risk</a>
+</nav>
+
+<h2 id="overview">1 · Overview</h2>
+<p>
+  A PiKVM is an IP-KVM: it plugs into a target computer's HDMI and USB ports and exposes the
+  screen as video and the keyboard/mouse as a USB HID gadget over a network API (<em>kvmd</em>).
+  <strong>claudekvm</strong> wraps that API so an LLM agent can <em>see</em> the target (JPEG
+  snapshots) and <em>act</em> on it (mouse/keyboard), with no software installed on the target.
+  Because the agent reasons over pixels and emits USB input, the target OS is irrelevant —
+  Windows, macOS and Linux are all driven the same way.
+</p>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  agent["LLM agent<br/>(Claude / Hermes / OpenClaw)"]
+  subgraph harness["claudekvm harness"]
+    cli["pikvm CLI"]
+    mcp["MCP server<br/>(stdio)"]
+    core["core: client · screen · hid · guard · atx"]
+  end
+  pikvm["PiKVM (kvmd)"]
+  target["Target computer<br/>HDMI + USB, any OS"]
+
+  agent -->|shell| cli
+  agent -->|MCP tools| mcp
+  cli --> core
+  mcp --> core
+  core -->|"HTTPS + WSS<br/>header auth"| pikvm
+  pikvm -->|USB HID| target
+  pikvm -->|HDMI capture| pikvm
+  target -.video.-> pikvm
+</pre>
+</div>
+
+<p>Two front-ends, one core. The CLI is for humans and shell-driven agents; the MCP server gives
+   MCP-capable agents typed tools (with screenshots returned as inline images). Both call the same
+   functions, so guardrails and behaviour are identical regardless of entry point.</p>
+
+<h2 id="components">2 · Component architecture</h2>
+<div class="diagram">
+<pre class="mermaid">
+flowchart TB
+  subgraph frontends["Front-ends"]
+    CLI["cli.py<br/>argparse verbs, exit codes"]
+    MCP["mcp_server.py<br/>FastMCP tools"]
+  end
+  subgraph core["Core library (pikvm_agent/)"]
+    CFG["config.py<br/>env / TOML / --mock"]
+    CLIENT["client.py<br/>httpx + websockets, header auth, TLS-insecure"]
+    SCREEN["screen.py<br/>snapshot · MJPEG fallback · OCR"]
+    HID["hid.py<br/>mouse/keyboard · px→kvm mapping"]
+    KEYMAP["keymap.py<br/>char→key · combo parser"]
+    GUARD["guard.py<br/>patterns · tokens · buffer · audit"]
+    ATX["atx.py<br/>power (guarded)"]
+  end
+  subgraph test["Test surface"]
+    MOCK["mock/mock_kvmd.py<br/>aiohttp fake device + event JSONL"]
+  end
+
+  CLI --> CFG & CLIENT & SCREEN & HID & GUARD & ATX
+  MCP --> CFG & CLIENT & SCREEN & HID & GUARD & ATX
+  HID --> KEYMAP & GUARD & CLIENT
+  ATX --> GUARD & CLIENT
+  SCREEN --> CLIENT
+  CLIENT --> CFG
+  MOCK -.serves.-> CLIENT
+</pre>
+</div>
+
+<h2 id="device">3 · Device contract</h2>
+<p>The kvmd API surface the harness relies on (verified against kvmd 4.132 on a Pi Zero 2 W):</p>
+<table>
+  <thead><tr><th>Concern</th><th>Endpoint / transport</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Auth</td><td><code>X-KVMD-User</code> / <code>X-KVMD-Passwd</code> headers</td><td>Stateless; on HTTP <em>and</em> WebSocket. Cookie login (<code>POST /api/auth/login</code>) is a fallback.</td></tr>
+    <tr><td>TLS</td><td>self-signed</td><td>Verification disabled by default.</td></tr>
+    <tr><td>Screen</td><td><code>GET /api/streamer/snapshot</code></td><td>One JPEG. <code>?ocr=1</code> → server-side Tesseract text. MJPEG <code>/stream</code> fallback.</td></tr>
+    <tr><td>Keyboard</td><td><code>POST /api/hid/print</code> · WS <code>key</code> events</td><td>Bulk text via print (server keymap); per-key over WS.</td></tr>
+    <tr><td>Mouse</td><td>WS <code>/api/ws</code> only</td><td>Absolute signed coords <code>[-32768, 32767]</code>.</td></tr>
+    <tr><td>Power</td><td><code>GET /api/atx</code> · <code>POST /api/atx/click</code></td><td>buttons: <code>power</code>, <code>power_long</code>, <code>reset</code>.</td></tr>
+    <tr><td>State</td><td><code>GET /api/info</code>, <code>GET /api/hid</code></td><td>HID reports <code>keyboard.online</code>, <code>mouse.online</code>, <code>mouse.absolute</code>.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="screen">4 · Screen capture</h2>
+<p>kvmd <strong>suspends the streamer when no KVM client is attached</strong>, so a cold
+   <code>snapshot</code> returns HTTP 503. The harness resolves this transparently: it briefly
+   holds the <code>/api/ws</code> event socket open, which makes kvmd resume the streamer, then
+   retries the snapshot. If snapshots remain unavailable it grabs a single frame from the MJPEG
+   <code>/stream</code>.</p>
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant A as Agent
+  participant S as screen.capture()
+  participant K as kvmd
+  A->>S: capture()
+  S->>K: GET /api/streamer/snapshot
+  alt streamer active
+    K-->>S: 200 image/jpeg
+  else suspended (503)
+    S->>K: open /api/ws  (wake streamer)
+    loop up to 10× / 1s
+      S->>K: GET /api/streamer/snapshot
+      K-->>S: 200 image/jpeg
+    end
+  else still nothing
+    S->>K: GET /stream  (one MJPEG frame)
+    K-->>S: multipart frame
+  end
+  S-->>A: JPEG + (width, height) + source
+</pre>
+</div>
+<p>Resolution is parsed from the JPEG with Pillow and cached, so subsequent mouse commands map
+   pixels without re-capturing.</p>
+
+<h2 id="hid">5 · HID input &amp; coordinate mapping</h2>
+<p>Mouse events go over the kvmd WebSocket as <strong>absolute</strong> positions in a signed
+   16-bit range. Screen pixels are mapped with the same formula the PiKVM web UI uses:</p>
+<pre><code>kvm = int(pixel / size * 65535 - 32768)      # clamped to [-32768, 32767]
+# (0,0)   → -32768   (top-left)
+# center  → ~0
+# (w,h)   → 32767    (bottom-right)</code></pre>
+<p>Keyboard input has two paths: bulk text uses the server-side <code>/api/hid/print</code>
+   (layout-aware, fast); individual keys and combos use per-key WS <code>key</code> events with
+   proper shift-wrapping and press-in-order / release-in-reverse for combos. A short flush delay
+   before the socket closes ensures the final event is processed.</p>
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  a["type / click / key"] --> g{"guard check"}
+  g -->|blocked| tok["issue token · exit 3"]
+  g -->|allowed| r["record + audit"]
+  r --> mk["keymap / px→kvm"]
+  mk --> ws["/api/ws or /api/hid/print"]
+  ws --> host["target HID"]
+</pre>
+</div>
+
+<h2 id="guard">6 · Guardrails</h2>
+<p>Dangerous actions never execute silently. They are blocked with exit code <code>3</code> and a
+   one-time token that a <em>human</em> must approve; the agent relays the token and waits.</p>
+<div class="grid2">
+  <div class="card"><h3>What's gated</h3>
+    <ul style="margin:0;padding-left:18px">
+      <li>Typed destructive commands — <code>shutdown</code>, <code>reboot</code>, <code>rm -rf</code>, <code>mkfs</code>, <code>dd if=</code>, <code>format</code>, <code>Stop-Computer</code>, <code>taskkill /f</code>, … (cross-platform)</li>
+      <li>An <code>Enter</code> that would execute a dangerous command already typed (rolling keystroke buffer)</li>
+      <li>The <code>Ctrl+Alt+Del</code> power chord</li>
+      <li>Every ATX power action</li>
+    </ul>
+  </div>
+  <div class="card"><h3>How confirmation works</h3>
+    <ul style="margin:0;padding-left:18px">
+      <li>6-hex one-time token, 10-minute expiry</li>
+      <li>Reused on repeat blocks so a valid token survives agent retries</li>
+      <li>Single-use: consumed on confirm</li>
+      <li>Every attempt (allowed / blocked / confirmed / executed) is appended to an audit log</li>
+    </ul>
+  </div>
+</div>
+<div class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> Scan
+  Scan --> Execute: benign
+  Scan --> Blocked: dangerous, no token
+  Blocked --> [*]: exit 3 + token (human must approve)
+  Scan --> Verify: dangerous, token supplied
+  Verify --> Execute: token valid &amp; matches action
+  Verify --> Blocked: wrong / expired token
+  Execute --> [*]: audit "executed"
+</pre>
+</div>
+<div class="note danger"><strong>Boundary:</strong> the confirm-token prompt is the real safety
+  boundary — keep a human in the loop for power actions. See §10 for the residual char-by-char
+  evasion risk and its mitigation.</div>
+
+<h2 id="agentloop">7 · The agent loop</h2>
+<p>The intended operating pattern, encoded in <code>skills/pikvm-remote/SKILL.md</code>: never fly
+   blind — screenshot, decide one small action, act, then screenshot again to verify before the
+   next step.</p>
+<div class="diagram">
+<pre class="mermaid">
+flowchart TB
+  s["screenshot"] --> read["read image → identify OS / UI state"]
+  read --> decide["decide ONE action"]
+  decide --> act["move / click / type / key"]
+  act --> verify["screenshot to verify"]
+  verify -->|not done| decide
+  verify -->|done| report["report to user"]
+  act -.->|exit 3| block["surface token → human approves → confirm"]
+  block --> verify
+</pre>
+</div>
+
+<h2 id="modules">8 · Module reference</h2>
+<table>
+  <thead><tr><th>Module</th><th>Responsibility</th><th>Key functions</th></tr></thead>
+  <tbody>
+    <tr><td><code>config.py</code></td><td>Resolve host/creds from <code>--mock</code> → <code>PIKVM_*</code> env → TOML; build base/WS URLs and auth headers.</td><td><code>load_config()</code>, <code>Config.base_url</code>, <code>Config.ws_url</code></td></tr>
+    <tr><td><code>client.py</code></td><td>HTTP + WebSocket transport; header auth with cookie fallback; TLS-insecure; ping/pong.</td><td><code>PiKvmClient</code>, <code>HidWebSocket</code>, <code>ensure_auth()</code></td></tr>
+    <tr><td><code>screen.py</code></td><td>Snapshot with streamer-wake, MJPEG single-frame fallback, OCR, resolution cache.</td><td><code>capture()</code>, <code>capture_ocr()</code></td></tr>
+    <tr><td><code>hid.py</code></td><td>Pixel→kvm mapping; mouse move/click/drag/wheel; typing; combos.</td><td><code>pixel_to_kvm()</code>, <code>click()</code>, <code>type_text()</code>, <code>press_combo()</code></td></tr>
+    <tr><td><code>keymap.py</code></td><td>Char→kvmd key table (US layout); combo string parser.</td><td><code>from_char()</code>, <code>parse_combo()</code></td></tr>
+    <tr><td><code>guard.py</code></td><td>Dangerous-pattern detection, confirm-token lifecycle, Enter-evasion buffer, audit log.</td><td><code>scan_text()</code>, <code>require_confirmation()</code>, <code>enter_would_execute_danger()</code></td></tr>
+    <tr><td><code>atx.py</code></td><td>Guarded power control.</td><td><code>click()</code>, <code>state()</code></td></tr>
+    <tr><td><code>cli.py</code></td><td>argparse verbs; exit codes; GuardError → token message.</td><td><code>main()</code></td></tr>
+    <tr><td><code>mcp_server.py</code></td><td>FastMCP stdio server; screenshot as inline image; blocked tools return token text.</td><td>11 <code>@mcp.tool()</code>s</td></tr>
+    <tr><td><code>mock/mock_kvmd.py</code></td><td>aiohttp fake kvmd; records every HID/ATX event to JSONL for assertions.</td><td><code>MockKvmd</code></td></tr>
+  </tbody>
+</table>
+
+<h2 id="models">9 · Recommended models</h2>
+<p>Driving this harness well demands two capabilities working together: <strong>strong visual
+   grounding</strong> (read a screenshot, locate a button, judge success) and <strong>reliable
+   tool-use / function-calling</strong> (emit precise coordinates and command arguments, follow
+   the screenshot→act→verify discipline). Long-context helps because each step carries prior
+   screenshots. The table below reflects generally-available models as of mid-2026.</p>
+<table>
+  <thead><tr><th>Model</th><th>Fit</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Claude Fable 5 / Opus 4.8 <span class="tag">Anthropic</span></td><td class="rec">Recommended</td><td>Top-tier visual grounding and tool-use, native MCP support, strong at multi-step verify-as-you-go control. Best default for the MCP path.</td></tr>
+    <tr><td>Claude Sonnet 5 <span class="tag">Anthropic</span></td><td class="rec">Recommended</td><td>Nearly the same computer-use quality at lower cost/latency — the pragmatic choice for high-volume or interactive sessions.</td></tr>
+    <tr><td>GPT-class vision + tools <span class="tag">OpenAI</span></td><td class="maybe">Workable</td><td>Solid screenshot reasoning and function-calling; wire it to the CLI or via an MCP bridge. Coordinate precision varies by build.</td></tr>
+    <tr><td>Gemini 2.x Pro (vision) <span class="tag">Google</span></td><td class="maybe">Workable</td><td>Good image understanding and long context; tool-calling reliability is the thing to validate for tight click targeting.</td></tr>
+    <tr><td>Hermes / open tool-use models <span class="tag">local</span></td><td class="maybe">Workable</td><td>Fine for the <em>action</em> side via the CLI; pair with a capable vision model for the <em>see</em> side, or use a vision-language checkpoint.</td></tr>
+    <tr><td>Text-only LLMs (no vision)</td><td class="no">Not suitable</td><td>Can emit commands but can't read the screen — they'd act blind. Only workable if paired with <code>screen_ocr</code> for pure-text UIs, which is fragile.</td></tr>
+  </tbody>
+</table>
+<div class="note"><strong>Selection heuristic:</strong> prioritise (1) screenshot grounding accuracy,
+  (2) coordinate/argument precision under tool-use, (3) instruction-following for the verify loop
+  and guardrail protocol. A model that's brilliant at prose but loose with coordinates will
+  misclick; a precise tool-caller that can't read the screen will act blind. You need both.</div>
+
+<h2 id="security">10 · Security &amp; residual risk</h2>
+<ul>
+  <li><strong>Credentials</strong> live outside the repo — <code>~/.config/pikvm-agent/config.toml</code> (chmod 600) or <code>PIKVM_*</code> env vars. <code>.gitignore</code> covers config, <code>.env</code>, state and audit files.</li>
+  <li><strong>Audit trail:</strong> every input and power action is appended to <code>~/.local/state/pikvm-agent/audit.log</code>.</li>
+  <li><strong>TLS:</strong> verification is disabled for the device's self-signed cert. Trust is scoped to the LAN path to the PiKVM; this is not an internet-facing tool.</li>
+  <li class="warn"><strong>Residual evasion:</strong> an agent could type a dangerous command one character at a time via <code>key</code> events to dodge the text scanner. The Enter-evasion rolling buffer catches the common "type then Enter" case, and the audit log records everything — but treat the confirm-token gate as the real boundary and keep a human approving power actions.</li>
+</ul>
+
+<footer>
+  claudekvm architecture · generated for the repository docs · diagrams rendered with Mermaid.
+  See <code>README.md</code> for setup and <code>skills/pikvm-remote/SKILL.md</code> for the agent playbook.
+</footer>
+
+</div>
+</body>
+</html>

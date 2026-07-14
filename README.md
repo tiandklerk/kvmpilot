@@ -70,6 +70,12 @@ Tools: `screenshot`, `screen_ocr`, `system_status`, `mouse_move`,
 `confirm_action`. A blocked action returns a token to relay to the human;
 call `confirm_action(token)` only after they approve.
 
+## Architecture
+
+`docs/architecture.html` is a standalone, diagrammed architecture document
+(system overview, component/data-flow diagrams, module reference, recommended
+models, and the security model). Open it in a browser.
+
 ## Agent playbook
 
 `skills/pikvm-remote/SKILL.md` is a drop-in Claude Code skill describing the
