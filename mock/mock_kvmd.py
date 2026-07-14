@@ -47,6 +47,7 @@ class MockKvmd:
     def __init__(self, events_file: Path | None = None, frame_file: Path | None = None):
         self.events_file = events_file
         self.atx_power = True
+        self.snapshot_enabled = True  # False simulates Janus-only mode (snapshot 404s)
         frame = frame_file or DEFAULT_FRAME
         self.frame_bytes = frame.read_bytes() if frame.exists() else _make_fallback_frame()
 
@@ -135,6 +136,8 @@ class MockKvmd:
     async def snapshot(self, request: web.Request) -> web.Response:
         if err := self._require_auth(request):
             return err
+        if not self.snapshot_enabled:
+            return web.json_response({"ok": False, "result": {}}, status=404)
         if request.query.get("ocr") == "1":
             return web.Response(text="mock kvmd test frame 1280x720\nTerminal - user@mockhost",
                                 content_type="text/plain")

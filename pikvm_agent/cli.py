@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from .client import PiKvmClient, PiKvmError
 from .config import ConfigError, load_config
@@ -47,6 +48,21 @@ def cmd_info(client: PiKvmClient, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_screenshot(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import screen
+
+    client.ensure_auth()
+    if args.ocr:
+        print(screen.capture_ocr(client))
+        return EXIT_OK
+    snap = screen.capture(client)
+    path = snap.save(args.output)
+    print(f"saved:      {path}")
+    print(f"resolution: {snap.width}x{snap.height}")
+    print(f"source:     {snap.source}")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pikvm",
@@ -62,6 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("info", help="raw /api/info JSON")
     p.set_defaults(func=cmd_info)
+
+    p = sub.add_parser("screenshot", help="capture the target's screen to a JPEG")
+    p.add_argument("-o", "--output", type=Path, default=None,
+                   help="output file (default: ~/.local/state/pikvm-agent/screenshots/screen-<ts>.jpg)")
+    p.add_argument("--ocr", action="store_true",
+                   help="print server-side OCR text of the frame instead of saving an image")
+    p.set_defaults(func=cmd_screenshot)
 
     return parser
 
