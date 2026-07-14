@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+.pytest_cache/
+# never commit device credentials or runtime state
+config.toml
+.env
+*.jsonl
+screenshots/
