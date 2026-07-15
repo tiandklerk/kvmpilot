@@ -283,6 +283,36 @@ def cmd_import(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_pair(args: argparse.Namespace) -> int:
+    """Create/rotate the pairing token the enrollment gateway requires."""
+    if config_mod.pairing_token_exists() and not args.rotate:
+        print("a pairing token already exists. Re-run with --rotate to replace it "
+              "(this invalidates the old one).")
+        return EXIT_OK
+    token = config_mod.create_pairing_token()
+    print("pairing token (shown once — store it in the app):\n")
+    print(f"    {token}\n")
+    print("Then run the gateway:  pikvm enroll-server --bind 0.0.0.0 --port 8099")
+    print("In the app, set the gateway URL (http://<this-host>:8099) and this token.")
+    print("Reach it over Tailscale/WireGuard — never expose it publicly.")
+    return EXIT_OK
+
+
+def cmd_enroll_server(args: argparse.Namespace) -> int:
+    """Run the enrollment gateway so a companion app can register PiKVMs."""
+    from . import enroll
+
+    if not config_mod.pairing_token_exists():
+        print("error: no pairing token yet — run `pikvm pair` first.", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"enrollment gateway on http://{args.bind}:{args.port}  "
+          f"(POST /enroll with the pairing token)")
+    if args.bind not in ("127.0.0.1", "localhost"):
+        print("  exposed beyond localhost — ensure this is on a private mesh, not the internet.")
+    enroll.serve(bind=args.bind, port=args.port)
+    return EXIT_OK
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     """Store a kvmd password in the OS keyring and verify it connects."""
     import getpass
@@ -455,6 +485,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("file", help="path to the exported registry .json")
     p.set_defaults(func=cmd_import)
 
+    p = sub.add_parser("pair", help="create the pairing token for the enrollment gateway")
+    p.add_argument("--rotate", action="store_true", help="replace an existing token")
+    p.set_defaults(func=cmd_pair)
+
+    p = sub.add_parser("enroll-server",
+                       help="run the network enrollment gateway (companion apps register PiKVMs)")
+    p.add_argument("--bind", default="127.0.0.1",
+                   help="bind address (default 127.0.0.1; use 0.0.0.0 for LAN/mesh)")
+    p.add_argument("--port", type=int, default=8099)
+    p.set_defaults(func=cmd_enroll_server)
+
     return parser
 
 
@@ -473,7 +514,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             mcp_main()
         return EXIT_OK
-    if args.command in ("login", "logout", "setup", "profiles", "import"):
+    if args.command in ("login", "logout", "setup", "profiles", "import",
+                        "pair", "enroll-server"):
         try:
             return args.func(args)
         except ConfigError as e:

@@ -92,6 +92,8 @@ pikvm logout                 # remove it from the keyring
 pikvm setup                  # onboarding wizard: add a profile
 pikvm profiles               # list configured PiKVMs
 pikvm import registry.json   # bulk-import profiles (e.g. exported from pikonnect)
+pikvm pair                   # create a pairing token for the enrollment gateway
+pikvm enroll-server          # run the gateway so a companion app can register PiKVMs
 pikvm mcp                    # run the MCP server over stdio
 ```
 
@@ -138,6 +140,21 @@ pikvm mcp --http --bind 0.0.0.0 --port 8000     # serves at http://<host>:8000/m
 the target. Put it behind Tailscale/WireGuard with the confirm-token guardrails
 as the backstop. On a headless host, keyring won't have a daemon, so supply
 credentials via `PIKVM_*` env vars or the TOML file there.
+
+### Enrollment gateway (register PiKVMs from a companion app)
+
+Instead of copying config files, a companion app (e.g. pikonnect) can push new
+PiKVM profiles to the server over the network:
+
+```bash
+pikvm pair                                    # prints a one-time pairing token
+pikvm enroll-server --bind 0.0.0.0 --port 8099   # authenticated gateway
+```
+
+The app sends the token as a Bearer credential to `POST /enroll`; imported
+profiles are usable immediately (no restart). The endpoint is credential-bearing
+— **keep it on a private mesh, never public**. Contract and app-side spec:
+`docs/pikonnect-export.md` and `docs/pikonnect-enroll-requirement.md`.
 
 ## Architecture
 

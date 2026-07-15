@@ -10,12 +10,12 @@ dependencies = [
     "mcp>=1.0",
     "keyring>=24",
     "tomli-w>=1.0",
+    "aiohttp>=3.9",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "aiohttp>=3.9",
 ]
 
 [project.scripts]

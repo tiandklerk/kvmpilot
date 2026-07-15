@@ -39,16 +39,22 @@ pikonnect writes a JSON document:
 
 ## How the app gets it to the harness
 
-Recommended primary path — **file export + import** (simple, offline, works on a
-headless host, you control the transfer):
+**Primary path — Export to Gateway (network push, no files).** The harness runs
+an authenticated enrollment gateway; the app POSTs the profile straight to it.
+See `docs/pikonnect-enroll-requirement.md` for the full app-side spec.
 
-1. In pikonnect: *Export profiles* → produces `pikvm-registry.json`.
-2. Move it to the harness box (share sheet → save, `scp`, a synced folder…).
-3. On the harness box: `pikvm import pikvm-registry.json`.
+1. On the harness box: `pikvm pair` (prints a one-time pairing token), then
+   `pikvm enroll-server --bind 0.0.0.0 --port 8099`.
+2. In pikonnect: set the gateway URL (`http://<host>:8099`) and paste the token
+   once. Then tap **Export to Gateway** on a KVM (or export all).
+3. The app `POST`s the registry JSON to `/enroll` with the token; the harness
+   imports it live — no restart, immediately drivable.
 
-Quick single-device path — **QR code** (where the harness box has a camera or
-you can paste): pikonnect shows a QR of one profile's JSON; decode and feed it to
-`pikvm import`. Good for adding one KVM without a file transfer.
+**Fallback — file export + import** (offline, or no gateway running):
+
+1. In pikonnect: *Export profiles* → `pikvm-registry.json`.
+2. Move it to the harness box (share sheet, `scp`, synced folder…).
+3. `pikvm import pikvm-registry.json`.
 
 Guidance:
 - Prefer the **password-less** export and `pikvm login` on the harness, so the

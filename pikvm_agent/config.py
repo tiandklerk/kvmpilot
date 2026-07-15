@@ -12,8 +12,12 @@ run `pikvm login` to save a password there and omit it from the TOML.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import re
+import secrets
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +35,10 @@ MOCK_HOST = "127.0.0.1"
 MOCK_PORT = 8686
 
 KEYRING_SERVICE = "pikvm-agent"
+ENROLL_TOKEN_PATH = STATE_DIR / "enroll_token.json"
+
+_PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+MAX_ENROLL_PROFILES = 50
 
 
 class ConfigError(Exception):
@@ -260,28 +268,81 @@ def save_profile(name: str, ep: Endpoint, make_default: bool = False) -> None:
     CONFIG_PATH.chmod(0o600)
 
 
-def import_registry(path: Path) -> list[str]:
-    """Ingest a pikonnect-style registry export. Schema:
+def import_registry_doc(doc: dict) -> list[str]:
+    """Ingest a pikonnect-style registry (already parsed). Schema:
         {"version":1, "default":"name",
-         "profiles":[{"name","host","user","use_ssl"?,"port"?,"password"?}]}
-    Endpoints are written to the TOML; any included passwords go to the keyring.
+         "profiles":[{"name","host","user"?,"use_ssl"?,"port"?,"password"?}]}
+    Validates untrusted input (this also backs the network enrollment endpoint):
+    endpoints are written to the TOML; included passwords go to the keyring.
     Returns the names imported.
     """
-    doc = json.loads(Path(path).read_text())
-    entries = doc.get("profiles", [])
-    if not entries:
-        raise ConfigError(f"{path}: no 'profiles' in registry export")
+    if not isinstance(doc, dict):
+        raise ConfigError("registry must be a JSON object")
+    entries = doc.get("profiles")
+    if not isinstance(entries, list) or not entries:
+        raise ConfigError("registry needs a non-empty 'profiles' array")
+    if len(entries) > MAX_ENROLL_PROFILES:
+        raise ConfigError(f"too many profiles (limit {MAX_ENROLL_PROFILES})")
+    default = doc.get("default")
     imported: list[str] = []
     for e in entries:
-        if "name" not in e or "host" not in e:
-            raise ConfigError(f"{path}: each profile needs at least 'name' and 'host'")
-        ep = Endpoint(host=e["host"], user=e.get("user", "admin"),
-                      use_ssl=e.get("use_ssl", True), port=e.get("port"))
-        save_profile(e["name"], ep, make_default=(e["name"] == doc.get("default")))
+        if not isinstance(e, dict) or "name" not in e or "host" not in e:
+            raise ConfigError("each profile needs at least 'name' and 'host'")
+        name = str(e["name"])
+        if not _PROFILE_NAME_RE.match(name):
+            raise ConfigError(f"invalid profile name {name!r} (use letters, digits, . _ -)")
+        try:
+            port = int(e["port"]) if e.get("port") else None
+        except (TypeError, ValueError):
+            raise ConfigError(f"profile {name!r}: 'port' must be a number") from None
+        ep = Endpoint(host=str(e["host"]), user=str(e.get("user", "admin")),
+                      use_ssl=bool(e.get("use_ssl", True)), port=port)
+        save_profile(name, ep, make_default=(name == default))
         if e.get("password") and keyring is not None:
             try:
-                set_stored_password(ep.host, ep.user, e["password"])
+                set_stored_password(ep.host, ep.user, str(e["password"]))
             except ConfigError:
                 pass  # no keyring here; endpoint still imported, user runs `pikvm login`
-        imported.append(e["name"])
+        imported.append(name)
     return imported
+
+
+def import_registry(path: Path) -> list[str]:
+    """Ingest a registry export from a file (see import_registry_doc)."""
+    return import_registry_doc(json.loads(Path(path).read_text()))
+
+
+# -- enrollment pairing token -------------------------------------------------
+#
+# The network enrollment endpoint (enroll.py) is credential-bearing, so it
+# requires a Bearer token. Only the token's hash is stored on disk.
+
+def create_pairing_token() -> str:
+    token = secrets.token_urlsafe(24)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    ENROLL_TOKEN_PATH.write_text(
+        json.dumps({"sha256": hashlib.sha256(token.encode()).hexdigest()}))
+    ENROLL_TOKEN_PATH.chmod(0o600)
+    return token
+
+
+def pairing_token_exists() -> bool:
+    return ENROLL_TOKEN_PATH.exists()
+
+
+def verify_pairing_token(presented: str | None) -> bool:
+    if not presented or not ENROLL_TOKEN_PATH.exists():
+        return False
+    try:
+        want = json.loads(ENROLL_TOKEN_PATH.read_text())["sha256"]
+    except (ValueError, OSError, KeyError):
+        return False
+    got = hashlib.sha256(presented.encode()).hexdigest()
+    return hmac.compare_digest(want, got)
+
+
+def clear_pairing_token() -> bool:
+    if ENROLL_TOKEN_PATH.exists():
+        ENROLL_TOKEN_PATH.unlink()
+        return True
+    return False
