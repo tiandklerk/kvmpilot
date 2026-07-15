@@ -2322,11 +2322,12 @@ flowchart TB
 </div>
 <p><strong>Efficiency refinements</strong> that keep the loop this shape while cutting cost:
    the <em>verify</em> step uses <code>screenshot(settle=true)</code> / <code>wait_for_stable</code>
-   to capture the moment the screen stops changing (no blind delays); reads use
-   <code>screenshot(crop=[x,y,w,h])</code> to send a native-resolution region instead of a full
-   frame (far fewer image tokens, no loss of legibility) or <code>screen_ocr</code> for text; and
-   trusted sub-sequences collapse into one round-trip via <code>run_actions</code> or
-   <code>type_text(submit=true)</code>. Coordinates always refer to the full screen.</p>
+   to capture the moment the screen stops changing (no blind delays); trusted sub-sequences
+   collapse into one round-trip via <code>run_actions</code> or <code>type_text(submit=true)</code>;
+   and text-only reads use <code>screen_ocr</code>. <code>screenshot(crop=[x,y,w,h])</code> is a
+   <em>situational</em> tool — a native-res region for a spot you have already located, not a
+   default (a blind crop is a keyhole and can cost more than one full frame). Never downscale to
+   save tokens: it only softens text. Coordinates always refer to the full screen.</p>
 
 <h2 id="cli">8 · Using the CLI</h2>
 <p>The CLI is the fastest way to drive the target and the substrate any shell-capable agent can

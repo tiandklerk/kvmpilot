@@ -12,6 +12,7 @@ run `pikvm login` to save a password there and omit it from the TOML.
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass
@@ -122,10 +123,65 @@ def delete_stored_password(host: str, user: str) -> bool:
         return False
 
 
-# -- endpoint + config resolution ---------------------------------------------
+# -- profiles (multiple PiKVMs) -----------------------------------------------
+#
+# The TOML file holds one or more named profiles plus an optional default:
+#
+#   default = "my_desktop"
+#   [profiles.my_desktop]
+#   host = "192.168.1.50"
+#   user = "admin"
+#   [profiles.lab]
+#   host = "10.0.0.5"
+#
+# A legacy flat file (top-level `host = ...`) is read as a single profile
+# named "default". Passwords live in the keyring (keyed per user@host), so one
+# keyring works for every profile.
 
-def resolve_endpoint() -> Endpoint:
-    """Connection target (no password required) from env vars or the TOML file."""
+def _read_toml() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    return tomllib.loads(CONFIG_PATH.read_text())
+
+
+def _endpoint_from_table(table: dict) -> Endpoint:
+    if "host" not in table:
+        raise ConfigError(f"{CONFIG_PATH}: profile missing required key 'host'")
+    return Endpoint(
+        host=table["host"],
+        user=table.get("user", "admin"),
+        use_ssl=table.get("use_ssl", True),
+        port=table.get("port"),
+        file_password=table.get("password"),
+    )
+
+
+def list_profiles() -> dict[str, Endpoint]:
+    """All configured profiles (name -> Endpoint), from the TOML file."""
+    data = _read_toml()
+    profiles: dict[str, Endpoint] = {}
+    if isinstance(data.get("profiles"), dict):
+        for name, table in data["profiles"].items():
+            profiles[name] = _endpoint_from_table(table)
+    elif "host" in data:  # legacy flat form
+        profiles["default"] = _endpoint_from_table(data)
+    return profiles
+
+
+def default_profile_name() -> str | None:
+    data = _read_toml()
+    if data.get("default"):
+        return data["default"]
+    profiles = list_profiles()
+    return next(iter(profiles)) if len(profiles) == 1 else None
+
+
+def resolve_endpoint(profile: str | None = None) -> Endpoint:
+    """Connection target (no password) — env vars, or a named TOML profile.
+
+    Selection: PIKVM_HOST env short-circuits to a single env device; otherwise
+    `profile` arg > PIKVM_PROFILE env > the file's `default` > the sole profile.
+    """
     env_host = os.environ.get("PIKVM_HOST")
     if env_host:
         return Endpoint(
@@ -133,27 +189,25 @@ def resolve_endpoint() -> Endpoint:
             user=os.environ.get("PIKVM_USER", "admin"),
             use_ssl=os.environ.get("PIKVM_SSL", "1") != "0",
             port=int(os.environ["PIKVM_PORT"]) if os.environ.get("PIKVM_PORT") else None,
-            file_password=None,
         )
-    if CONFIG_PATH.exists():
-        data = tomllib.loads(CONFIG_PATH.read_text())
-        if "host" not in data:
-            raise ConfigError(f"{CONFIG_PATH}: missing required key 'host'")
-        return Endpoint(
-            host=data["host"],
-            user=data.get("user", "admin"),
-            use_ssl=data.get("use_ssl", True),
-            port=data.get("port"),
-            file_password=data.get("password"),
+
+    profiles = list_profiles()
+    if not profiles:
+        raise ConfigError(
+            "No PiKVM configured. Run `pikvm setup`, set PIKVM_HOST, or use --mock."
         )
-    raise ConfigError(
-        "No PiKVM configured. Set PIKVM_HOST (with PIKVM_USER), "
-        f"create {CONFIG_PATH} (keys: host, user, use_ssl, port), "
-        "or use --mock against the local mock device."
-    )
+    name = profile or os.environ.get("PIKVM_PROFILE") or default_profile_name()
+    if name is None:
+        raise ConfigError(
+            f"Multiple profiles configured ({', '.join(profiles)}); pick one with "
+            "--profile NAME or set a `default` in the config."
+        )
+    if name not in profiles:
+        raise ConfigError(f"no profile {name!r} (have: {', '.join(profiles)})")
+    return profiles[name]
 
 
-def load_config(mock: bool = False) -> Config:
+def load_config(mock: bool = False, profile: str | None = None) -> Config:
     if mock or os.environ.get("PIKVM_MOCK") == "1":
         return Config(
             host=os.environ.get("PIKVM_MOCK_HOST", MOCK_HOST),
@@ -163,7 +217,7 @@ def load_config(mock: bool = False) -> Config:
             use_ssl=False,
         )
 
-    ep = resolve_endpoint()
+    ep = resolve_endpoint(profile)
     # password precedence: env override > plaintext TOML > OS keyring
     password = (
         os.environ.get("PIKVM_PASSWORD")
@@ -172,8 +226,62 @@ def load_config(mock: bool = False) -> Config:
     )
     if not password:
         raise ConfigError(
-            f"No password for {ep.user}@{ep.host}. Store one securely in the OS keyring "
-            "with `pikvm login`, set PIKVM_PASSWORD, or add password=... to "
-            f"{CONFIG_PATH}."
+            f"No password for {ep.user}@{ep.host}. Store one securely with "
+            "`pikvm login`, set PIKVM_PASSWORD, or add password=... to the profile."
         )
     return Config(host=ep.host, user=ep.user, password=password, use_ssl=ep.use_ssl, port=ep.port)
+
+
+# -- writing config (setup wizard, import) ------------------------------------
+
+def save_profile(name: str, ep: Endpoint, make_default: bool = False) -> None:
+    """Add or update a named profile in the TOML file (secrets go to keyring)."""
+    import tomli_w
+
+    data = _read_toml()
+    # migrate a legacy flat file into the profiles table
+    if "host" in data and "profiles" not in data:
+        legacy = {k: data.pop(k) for k in ("host", "user", "use_ssl", "port", "password")
+                  if k in data}
+        data.setdefault("profiles", {})["default"] = legacy
+    data.setdefault("profiles", {})
+    table = {"host": ep.host, "user": ep.user, "use_ssl": ep.use_ssl}
+    if ep.port:
+        table["port"] = ep.port
+    data["profiles"][name] = table
+    if make_default or "default" not in data:
+        data["default"] = name
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(
+        "# pikvm-agent config — profiles for one or more PiKVMs.\n"
+        "# Passwords are NOT stored here; use `pikvm login`.\n"
+        + tomli_w.dumps(data)
+    )
+    CONFIG_PATH.chmod(0o600)
+
+
+def import_registry(path: Path) -> list[str]:
+    """Ingest a pikonnect-style registry export. Schema:
+        {"version":1, "default":"name",
+         "profiles":[{"name","host","user","use_ssl"?,"port"?,"password"?}]}
+    Endpoints are written to the TOML; any included passwords go to the keyring.
+    Returns the names imported.
+    """
+    doc = json.loads(Path(path).read_text())
+    entries = doc.get("profiles", [])
+    if not entries:
+        raise ConfigError(f"{path}: no 'profiles' in registry export")
+    imported: list[str] = []
+    for e in entries:
+        if "name" not in e or "host" not in e:
+            raise ConfigError(f"{path}: each profile needs at least 'name' and 'host'")
+        ep = Endpoint(host=e["host"], user=e.get("user", "admin"),
+                      use_ssl=e.get("use_ssl", True), port=e.get("port"))
+        save_profile(e["name"], ep, make_default=(e["name"] == doc.get("default")))
+        if e.get("password") and keyring is not None:
+            try:
+                set_stored_password(ep.host, ep.user, e["password"])
+            except ConfigError:
+                pass  # no keyring here; endpoint still imported, user runs `pikvm login`
+        imported.append(e["name"])
+    return imported

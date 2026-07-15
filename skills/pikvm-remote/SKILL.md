@@ -16,9 +16,32 @@ against the local mock device.
    the resolution — coordinates you pass are in those screen pixels.
 2. **Decide** one small action from what you see.
 3. **Act.** `move` / `click` / `type` / `key`.
-4. **Verify.** Screenshot again and confirm the effect before the next action.
-   Do not chain several blind inputs; the target may lag, focus may be wrong,
-   a dialog may have appeared.
+4. **Verify.** Prefer `pikvm screenshot --settle` (or the `wait_for_stable`
+   tool) so you capture once the screen has stopped changing, instead of
+   guessing a delay. Confirm the effect before the next action. Do not chain
+   several blind inputs; the target may lag, focus may be wrong, a dialog may
+   have appeared.
+
+### Keeping it cheap without going blind
+
+Screenshots dominate token cost, so spend them well — but **don't reach for
+`--crop` by default.** A full-screen frame is your context; cropping is a
+keyhole. Guidance:
+- **Full frame** to orient, navigate, or whenever you're unsure where things
+  are. Do **not** downscale — it makes text illegible and barely saves tokens.
+- **`--crop x,y,w,h`** only to re-read a region you have *already located* (a
+  dialog, a status line) — native resolution, cheap, still legible. If you'd
+  need several crops to find something, take one full frame instead.
+- **`screen_ocr`** for text-only reads (terminal output, a value) — far cheaper
+  than an image, but it can't see icons or tell you where to click.
+- **Batch trusted input** with `type "cmd" --enter` or the `run_actions` tool so
+  a known sub-sequence costs one round-trip, then verify with one screenshot.
+Coordinates always refer to the full screen, even after a crop.
+
+## Choosing a device
+
+If several PiKVMs are configured (`pikvm profiles`), pass `--profile NAME` (or
+set a default). The MCP server targets whichever profile it was started with.
 
 ## First, orient (check system state)
 

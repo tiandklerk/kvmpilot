@@ -9,6 +9,7 @@ dependencies = [
     "pillow>=10",
     "mcp>=1.0",
     "keyring>=24",
+    "tomli-w>=1.0",
 ]
 
 [project.optional-dependencies]

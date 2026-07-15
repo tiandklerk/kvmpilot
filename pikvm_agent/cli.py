@@ -188,7 +188,7 @@ def cmd_confirm(client: PiKvmClient, args: argparse.Namespace) -> int:
 
 
 def _endpoint_from_args(args: argparse.Namespace) -> config_mod.Endpoint:
-    """Resolve host/user from --host/--user flags, else env/TOML."""
+    """Resolve host/user from --host/--user flags, else the selected profile."""
     if args.host:
         return config_mod.Endpoint(
             host=args.host,
@@ -196,10 +196,91 @@ def _endpoint_from_args(args: argparse.Namespace) -> config_mod.Endpoint:
             use_ssl=not args.no_ssl,
             port=args.port,
         )
-    ep = config_mod.resolve_endpoint()
+    ep = config_mod.resolve_endpoint(getattr(args, "profile", None))
     if args.user:
         ep.user = args.user
     return ep
+
+
+def cmd_profiles(args: argparse.Namespace) -> int:
+    """List configured PiKVM profiles."""
+    profiles = config_mod.list_profiles()
+    if not profiles:
+        print("no profiles configured — run `pikvm setup`")
+        return EXIT_OK
+    default = config_mod.default_profile_name()
+    for name, ep in profiles.items():
+        has_pw = ep.file_password is not None or config_mod.get_stored_password(ep.host, ep.user)
+        mark = "*" if name == default else " "
+        scheme = "https" if ep.use_ssl else "http"
+        print(f"{mark} {name:<16} {scheme}://{ep.user}@{ep.host}"
+              f"{'  [password set]' if has_pw else '  [no password — run pikvm login]'}")
+    print("\n(* = default)")
+    return EXIT_OK
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Interactive onboarding: add a profile, store its password, verify, and
+    print the MCP registration command."""
+    import getpass
+
+    print("pikvm setup — add a PiKVM profile\n")
+    name = args.name or input("profile name [default]: ").strip() or "default"
+    host = args.host or input("host or IP: ").strip()
+    if not host:
+        print("error: a host is required", file=sys.stderr)
+        return EXIT_ERROR
+    user = args.user or input("user [admin]: ").strip() or "admin"
+    ssl_in = ("n" if args.no_ssl else input("use TLS/https? [Y/n]: ").strip().lower())
+    use_ssl = ssl_in not in ("n", "no")
+    ep = config_mod.Endpoint(host=host, user=user, use_ssl=use_ssl, port=args.port)
+
+    password = args.password or getpass.getpass(f"kvmd password for {user}@{host}: ")
+    if not password:
+        print("error: a password is required", file=sys.stderr)
+        return EXIT_ERROR
+
+    cfg = config_mod.Config(host, user, password, use_ssl, args.port)
+    try:
+        with PiKvmClient(cfg) as client:
+            client.ensure_auth()
+    except (PiKvmError, ConnectionError, OSError) as e:
+        print(f"error: could not verify credentials against {cfg.base_url}: {e}",
+              file=sys.stderr)
+        return EXIT_ERROR
+
+    config_mod.save_profile(name, ep, make_default=args.default)
+    stored_in = "keyring"
+    try:
+        config_mod.set_stored_password(host, user, password)
+    except ConfigError:
+        # no secret store here — fall back to writing the password into the profile
+        stored_in = "config file (no keyring daemon available)"
+        data = config_mod._read_toml()
+        data["profiles"][name]["password"] = password
+        import tomli_w
+        config_mod.CONFIG_PATH.write_text(tomli_w.dumps(data))
+        config_mod.CONFIG_PATH.chmod(0o600)
+
+    print(f"\n✓ profile '{name}' saved and verified (password in {stored_in}).")
+    print("register it with an MCP client, e.g. Claude Code:\n")
+    print("    claude mcp add pikvm -- pikvm mcp")
+    print(f"\nuse it from the CLI with:  pikvm --profile {name} status")
+    return EXIT_OK
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    """Import a pikonnect-style registry export (many profiles at once)."""
+    from pathlib import Path as _Path
+
+    try:
+        names = config_mod.import_registry(_Path(args.file))
+    except (ConfigError, ValueError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"imported {len(names)} profile(s): {', '.join(names)}")
+    print("profiles without a bundled password: run `pikvm login --profile <name>`.")
+    return EXIT_OK
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -262,6 +343,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mock", action="store_true",
                         help="target the local mock kvmd (see mock/mock_kvmd.py)")
+    parser.add_argument("--profile", default=None,
+                        help="which configured PiKVM profile to use (see `pikvm profiles`)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("status", help="device reachability, ATX power state, snapshot availability")
@@ -355,6 +438,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-ssl", action="store_true")
     p.set_defaults(func=cmd_logout)
 
+    p = sub.add_parser("setup", help="interactive onboarding: add a PiKVM profile")
+    p.add_argument("--name", default=None)
+    p.add_argument("--host", default=None)
+    p.add_argument("--user", default=None)
+    p.add_argument("--port", type=int, default=None)
+    p.add_argument("--no-ssl", action="store_true")
+    p.add_argument("--password", default=None, help="skip the prompt (not recommended)")
+    p.add_argument("--default", action="store_true", help="make this the default profile")
+    p.set_defaults(func=cmd_setup)
+
+    p = sub.add_parser("profiles", help="list configured PiKVM profiles")
+    p.set_defaults(func=cmd_profiles)
+
+    p = sub.add_parser("import", help="import a pikonnect registry export (JSON)")
+    p.add_argument("file", help="path to the exported registry .json")
+    p.set_defaults(func=cmd_import)
+
     return parser
 
 
@@ -373,14 +473,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             mcp_main()
         return EXIT_OK
-    if args.command in ("login", "logout"):
+    if args.command in ("login", "logout", "setup", "profiles", "import"):
         try:
             return args.func(args)
         except ConfigError as e:
             print(f"error: {e}", file=sys.stderr)
             return EXIT_ERROR
     try:
-        config = load_config(mock=args.mock)
+        config = load_config(mock=args.mock, profile=args.profile)
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_ERROR

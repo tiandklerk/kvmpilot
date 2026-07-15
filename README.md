@@ -25,16 +25,36 @@ uv venv && uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
 
 ## Configure the device
 
-The connection endpoint (host/user/ssl/port) comes from, in order, `--mock`,
-`PIKVM_*` env vars, then `~/.config/pikvm-agent/config.toml`:
+Fastest path — the onboarding wizard:
+
+```bash
+pikvm setup                  # prompts for host/user/password, verifies, saves a profile
+pikvm profiles               # list configured PiKVMs
+pikvm --profile lab status   # target a specific one
+```
+
+Under the hood, the endpoint (host/user/ssl/port) comes from, in order,
+`--mock`, `PIKVM_*` env vars, then `~/.config/pikvm-agent/config.toml`, which
+holds one or more **named profiles** (multiple PiKVMs):
 
 ```toml
+default = "my_desktop"
+
+[profiles.my_desktop]
 host = "192.168.1.50"
 user = "admin"
 use_ssl = true          # PiKVM ships self-signed certs; TLS verification is off
 # port = 443            # optional
 # password = "..."      # optional — prefer the OS keyring (see below)
+
+[profiles.lab]
+host = "10.0.0.5"
+user = "admin"
 ```
+
+Select a profile with `--profile NAME`, `PIKVM_PROFILE`, or the `default` key.
+A legacy flat file (top-level `host = ...`) still works as a single profile. A
+single `PIKVM_HOST` env var overrides everything for one-off / CI use.
 
 The **password** is resolved separately so it needn't sit in plaintext, in
 order: `PIKVM_PASSWORD` env var → `password` in the TOML → **OS keyring**.
@@ -69,8 +89,13 @@ pikvm atx power              # power control (guarded)
 pikvm confirm <TOKEN>        # approve a blocked action
 pikvm login                  # store the kvmd password in the OS keyring
 pikvm logout                 # remove it from the keyring
+pikvm setup                  # onboarding wizard: add a profile
+pikvm profiles               # list configured PiKVMs
+pikvm import registry.json   # bulk-import profiles (e.g. exported from pikonnect)
 pikvm mcp                    # run the MCP server over stdio
 ```
+
+Global `--profile NAME` selects which configured PiKVM a command targets.
 
 Add `--mock` to any command to target the bundled mock device instead of real
 hardware. Exit code `3` means an action was blocked pending confirmation.
