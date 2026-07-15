@@ -96,23 +96,42 @@ def wheel(client: PiKvmClient, dy: int, dx: int = 0) -> None:
 # -- keyboard -----------------------------------------------------------------
 
 def type_text(client: PiKvmClient, text: str, force_ws: bool = False,
-              confirm_token: str | None = None) -> str:
+              confirm_token: str | None = None, submit: bool = False) -> str:
     """Type text on the target. Prefers server-side /api/hid/print (layout-
     aware, fast); falls back to per-key WebSocket events. Returns the path
-    used ("print" or "ws"). Dangerous command text is gated by guardrails."""
+    used ("print" or "ws"). Dangerous command text is gated by guardrails.
+
+    submit=True presses Enter right after typing, in the same call — the common
+    "type a command and run it" compound. The danger check runs on `text`, so a
+    dangerous command is gated once (at the type), not twice.
+    """
     danger = guard.scan_text(text)
     if danger is not None:
         guard.require_confirmation(f"type:{text}", danger.reason, confirm_token)
     guard.record_typed(text)
     guard.audit(f"type:{len(text)}chars", "executed", text[:80])
+
+    path = "ws"
     if not force_ws:
         try:
             client.hid_print(text)
-            return "print"
+            path = "print"
         except PiKvmError:
-            pass
-    _type_text_ws(client, text)
-    return "ws"
+            path = "ws"
+    if path == "ws":
+        _type_text_ws(client, text)
+
+    if submit:
+        # `text` was already gated above; clear the buffer so the Enter isn't
+        # re-flagged by the type-then-Enter evasion check.
+        guard.clear_typed_buffer()
+        with client.open_ws() as ws:
+            ws.key("Enter", True)
+            time.sleep(KEY_DELAY)
+            ws.key("Enter", False)
+            time.sleep(FLUSH_DELAY)
+        guard.audit("key:Enter", "executed", "submit after type")
+    return path
 
 
 def _type_text_ws(client: PiKvmClient, text: str) -> None:
@@ -159,3 +178,41 @@ def press_combo(client: PiKvmClient, combo: str, confirm_token: str | None = Non
             time.sleep(KEY_DELAY)
         time.sleep(FLUSH_DELAY)
     return keys
+
+
+# -- compound actions ---------------------------------------------------------
+
+def run_sequence(client: PiKvmClient, actions: list[dict],
+                 confirm_token: str | None = None) -> list[str]:
+    """Run a list of input steps in order, so an agent spends one round-trip on
+    a trusted sub-sequence instead of one per step. Each action is a dict with
+    an "action" key: move{x,y} | click{button?,x?,y?,double?} | drag{x1,y1,x2,y2}
+    | wheel{dy} | type{text,submit?} | key{combo}. Guardrails apply per step; a
+    blocked step raises GuardError and stops the sequence there.
+    """
+    results: list[str] = []
+    for i, a in enumerate(actions):
+        kind = a.get("action")
+        if kind == "move":
+            mouse_move(client, a["x"], a["y"])
+            results.append(f"move ({a['x']},{a['y']})")
+        elif kind == "click":
+            click(client, a.get("button", "left"), a.get("x"), a.get("y"),
+                  double=a.get("double", False))
+            results.append(f"{a.get('button', 'left')} click")
+        elif kind == "drag":
+            drag(client, a["x1"], a["y1"], a["x2"], a["y2"])
+            results.append("drag")
+        elif kind == "wheel":
+            wheel(client, a["dy"])
+            results.append(f"wheel {a['dy']}")
+        elif kind == "type":
+            type_text(client, a["text"], confirm_token=confirm_token,
+                      submit=a.get("submit", False))
+            results.append(f"type {len(a['text'])} chars")
+        elif kind == "key":
+            press_combo(client, a["combo"], confirm_token=confirm_token)
+            results.append(f"key {a['combo']}")
+        else:
+            raise PiKvmError(f"action {i}: unknown action {kind!r}")
+    return results

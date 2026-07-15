@@ -67,6 +67,16 @@ def cmd_info(client: PiKvmClient, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _parse_crop(value: str | None) -> tuple[int, int, int, int] | None:
+    if not value:
+        return None
+    try:
+        x, y, w, h = (int(n) for n in value.split(","))
+    except ValueError:
+        raise ConfigError(f"--crop expects 'x,y,w,h' integers, got {value!r}") from None
+    return (x, y, w, h)
+
+
 def cmd_screenshot(client: PiKvmClient, args: argparse.Namespace) -> int:
     from . import screen
 
@@ -74,10 +84,17 @@ def cmd_screenshot(client: PiKvmClient, args: argparse.Namespace) -> int:
     if args.ocr:
         print(screen.capture_ocr(client))
         return EXIT_OK
-    snap = screen.capture(client)
+    crop = _parse_crop(args.crop)
+    if args.settle:
+        snap, settled = screen.wait_until_stable(client, crop=crop)
+        if not settled:
+            print("note: screen still changing at timeout", file=sys.stderr)
+    else:
+        snap = screen.capture(client, crop=crop)
     path = snap.save(args.output)
     print(f"saved:      {path}")
-    print(f"resolution: {snap.width}x{snap.height}")
+    print(f"resolution: {snap.width}x{snap.height}"
+          + (f"  (crop of full screen at {crop[0]},{crop[1]})" if crop else ""))
     print(f"source:     {snap.source}")
     return EXIT_OK
 
@@ -123,8 +140,8 @@ def cmd_type(client: PiKvmClient, args: argparse.Namespace) -> int:
     from . import hid
 
     client.ensure_auth()
-    path = hid.type_text(client, args.text, confirm_token=args.confirm)
-    print(f"typed {len(args.text)} chars via {path}")
+    path = hid.type_text(client, args.text, confirm_token=args.confirm, submit=args.enter)
+    print(f"typed {len(args.text)} chars via {path}" + (" + Enter" if args.enter else ""))
     return EXIT_OK
 
 
@@ -259,6 +276,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="output file (default: ~/.local/state/pikvm-agent/screenshots/screen-<ts>.jpg)")
     p.add_argument("--ocr", action="store_true",
                    help="print server-side OCR text of the frame instead of saving an image")
+    p.add_argument("--crop", metavar="X,Y,W,H", default=None,
+                   help="capture only this region at native resolution (full-screen pixels)")
+    p.add_argument("--settle", action="store_true",
+                   help="wait until the screen stops changing before capturing")
     p.set_defaults(func=cmd_screenshot)
 
     p = sub.add_parser("move", help="move mouse to pixel coordinates")
@@ -286,6 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("type", help="type text on the target")
     p.add_argument("text")
+    p.add_argument("--enter", action="store_true",
+                   help="press Enter right after typing (type-and-run in one call)")
     p.add_argument("--confirm", metavar="TOKEN", default=None,
                    help="token to authorize a previously blocked dangerous command")
     p.set_defaults(func=cmd_type)
@@ -306,7 +329,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("token")
     p.set_defaults(func=cmd_confirm)
 
-    p = sub.add_parser("mcp", help="run the MCP server (stdio) for MCP-capable agents")
+    p = sub.add_parser("mcp", help="run the MCP server for MCP-capable agents")
+    p.add_argument("--http", action="store_true",
+                   help="serve over streamable-HTTP instead of stdio (for hosting on a LAN box)")
+    p.add_argument("--bind", default="127.0.0.1",
+                   help="HTTP bind address (default 127.0.0.1; use 0.0.0.0 to expose on the LAN)")
+    p.add_argument("--port", type=int, default=8000, help="HTTP port (default 8000)")
     p.set_defaults(func=None)  # handled specially in main() before opening a client
 
     p = sub.add_parser("login", help="store a kvmd password in the OS keyring (recommended)")
@@ -340,7 +368,10 @@ def main(argv: list[str] | None = None) -> int:
             os.environ["PIKVM_MOCK"] = "1"  # propagate to the server's load_config()
         from .mcp_server import main as mcp_main
 
-        mcp_main()
+        if args.http:
+            mcp_main(transport="streamable-http", host=args.bind, port=args.port)
+        else:
+            mcp_main()
         return EXIT_OK
     if args.command in ("login", "logout"):
         try:

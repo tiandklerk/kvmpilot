@@ -2320,6 +2320,13 @@ flowchart TB
   block --> verify
 </pre>
 </div>
+<p><strong>Efficiency refinements</strong> that keep the loop this shape while cutting cost:
+   the <em>verify</em> step uses <code>screenshot(settle=true)</code> / <code>wait_for_stable</code>
+   to capture the moment the screen stops changing (no blind delays); reads use
+   <code>screenshot(crop=[x,y,w,h])</code> to send a native-resolution region instead of a full
+   frame (far fewer image tokens, no loss of legibility) or <code>screen_ocr</code> for text; and
+   trusted sub-sequences collapse into one round-trip via <code>run_actions</code> or
+   <code>type_text(submit=true)</code>. Coordinates always refer to the full screen.</p>
 
 <h2 id="cli">8 · Using the CLI</h2>
 <p>The CLI is the fastest way to drive the target and the substrate any shell-capable agent can
@@ -2398,14 +2405,16 @@ claude mcp add pikvm-mock -- pikvm --mock mcp</code></pre>
 <table>
   <thead><tr><th>Tool</th><th>Args</th><th>Returns</th></tr></thead>
   <tbody>
-    <tr><td><code>screenshot</code></td><td>—</td><td>inline JPEG image</td></tr>
+    <tr><td><code>screenshot</code></td><td><code>crop?, settle?</code></td><td>inline JPEG (optionally a native-res region, and/or after the screen settles)</td></tr>
+    <tr><td><code>wait_for_stable</code></td><td><code>timeout?, crop?</code></td><td>inline JPEG once the screen stops changing</td></tr>
+    <tr><td><code>run_actions</code></td><td><code>actions[], confirm_token?</code></td><td>run a sequence of input steps in one call</td></tr>
     <tr><td><code>screen_ocr</code></td><td>—</td><td>OCR text</td></tr>
     <tr><td><code>system_status</code></td><td>—</td><td>device / power / HID online text</td></tr>
     <tr><td><code>mouse_move</code></td><td><code>x, y</code></td><td>confirmation</td></tr>
     <tr><td><code>mouse_click</code></td><td><code>button, x?, y?, double?</code></td><td>confirmation</td></tr>
     <tr><td><code>mouse_drag</code></td><td><code>x1, y1, x2, y2</code></td><td>confirmation</td></tr>
     <tr><td><code>wheel</code></td><td><code>dy</code></td><td>confirmation</td></tr>
-    <tr><td><code>type_text</code></td><td><code>text, confirm_token?</code></td><td>result — or a <em>BLOCKED + token</em> message</td></tr>
+    <tr><td><code>type_text</code></td><td><code>text, submit?, confirm_token?</code></td><td>result — or a <em>BLOCKED + token</em> message (<code>submit</code> presses Enter after)</td></tr>
     <tr><td><code>press_keys</code></td><td><code>combo, confirm_token?</code></td><td>result — or a <em>BLOCKED + token</em> message</td></tr>
     <tr><td><code>atx_action</code></td><td><code>button, confirm_token?</code></td><td>result — or a <em>BLOCKED + token</em> message</td></tr>
     <tr><td><code>confirm_action</code></td><td><code>token</code></td><td>executes the pending guarded action</td></tr>

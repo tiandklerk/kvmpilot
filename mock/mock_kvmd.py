@@ -50,6 +50,7 @@ class MockKvmd:
         self.snapshot_enabled = True  # False simulates Janus-only mode (snapshot 404s)
         self.mouse_online = True
         self.keyboard_online = True
+        self.snapshot_churn = 0  # >0: return N changing frames (for settle tests)
         frame = frame_file or DEFAULT_FRAME
         self.frame_bytes = frame.read_bytes() if frame.exists() else _make_fallback_frame()
 
@@ -60,6 +61,19 @@ class MockKvmd:
         if self.events_file:
             with self.events_file.open("a") as f:
                 f.write(json.dumps(entry) + "\n")
+
+    def _churn_frame(self, n: int) -> bytes:
+        """A frame that visibly differs from its neighbours (a block whose
+        position depends on n) — makes consecutive frames register as motion."""
+        from PIL import Image, ImageDraw
+
+        img = Image.open(io.BytesIO(self.frame_bytes)).convert("RGB")
+        d = ImageDraw.Draw(img)
+        x = 100 + (n % 5) * 300
+        d.rectangle([x, 300, x + 250, 550], fill=(255, 255, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
 
     def _authed(self, request: web.Request) -> bool:
         if (
@@ -153,6 +167,10 @@ class MockKvmd:
             return err
         if not self.snapshot_enabled:
             return web.json_response({"ok": False, "result": {}}, status=404)
+        if self.snapshot_churn > 0 and request.query.get("ocr") != "1":
+            self.snapshot_churn -= 1
+            return web.Response(body=self._churn_frame(self.snapshot_churn),
+                                content_type="image/jpeg")
         if request.query.get("ocr") == "1":
             return web.Response(text="mock kvmd test frame 1280x720\nTerminal - user@mockhost",
                                 content_type="text/plain")

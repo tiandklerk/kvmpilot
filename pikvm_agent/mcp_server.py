@@ -66,17 +66,41 @@ def system_status() -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
-def screenshot() -> ImageContent:
-    """Capture the target's current screen as a JPEG image. Use this to see
-    what is displayed and to verify the result of any input action."""
-    with _client() as c:
-        snap = screen.capture(c)
+def _image(snap) -> ImageContent:
     return ImageContent(
         type="image",
         data=base64.b64encode(snap.jpeg).decode("ascii"),
         mimeType="image/jpeg",
     )
+
+
+@mcp.tool()
+def screenshot(crop: list[int] | None = None, settle: bool = False) -> ImageContent:
+    """Capture the target's current screen as a JPEG. Use it to see the screen
+    and to verify the result of an action.
+
+    crop=[x,y,w,h] returns just that region at native resolution — far cheaper
+    in tokens than the full frame with no loss of legibility, and coordinates
+    still refer to the full screen (add the crop origin back when clicking).
+    settle=True waits until the screen stops changing before capturing, instead
+    of you guessing a delay after an action."""
+    box = tuple(crop) if crop else None
+    with _client() as c:
+        if settle:
+            snap, _ = screen.wait_until_stable(c, crop=box)
+        else:
+            snap = screen.capture(c, crop=box)
+    return _image(snap)
+
+
+@mcp.tool()
+def wait_for_stable(timeout: float = 8.0, crop: list[int] | None = None) -> ImageContent:
+    """Wait until the screen stops changing (frame-diff), then return a
+    screenshot. Use after an action instead of a blind delay."""
+    box = tuple(crop) if crop else None
+    with _client() as c:
+        snap, _ = screen.wait_until_stable(c, timeout=timeout, crop=box)
+    return _image(snap)
 
 
 @mcp.tool()
@@ -121,15 +145,31 @@ def wheel(dy: int) -> str:
 
 
 @mcp.tool()
-def type_text(text: str, confirm_token: str | None = None) -> str | list:
-    """Type text on the target. Dangerous command text is blocked and returns
-    a confirmation token the human must approve (pass it back as confirm_token)."""
+def type_text(text: str, submit: bool = False, confirm_token: str | None = None) -> str | list:
+    """Type text on the target. submit=True presses Enter right after (type-and-
+    run in one call). Dangerous command text is blocked and returns a
+    confirmation token the human must approve (pass it back as confirm_token)."""
     try:
         with _client() as c:
-            path = hid.type_text(c, text, confirm_token=confirm_token)
+            path = hid.type_text(c, text, confirm_token=confirm_token, submit=submit)
     except guard.GuardError as e:
         return [_guard_message(e)]
-    return f"typed {len(text)} chars via {path}"
+    return f"typed {len(text)} chars via {path}" + (" + Enter" if submit else "")
+
+
+@mcp.tool()
+def run_actions(actions: list[dict], confirm_token: str | None = None) -> str | list:
+    """Run a sequence of input steps in one call — one round-trip for a trusted
+    sub-sequence instead of one per step. Each item is a dict with an "action":
+    move{x,y} | click{button?,x?,y?,double?} | drag{x1,y1,x2,y2} | wheel{dy} |
+    type{text,submit?} | key{combo}. A blocked step returns a token and stops
+    the sequence there. Take a screenshot afterwards to verify."""
+    try:
+        with _client() as c:
+            results = hid.run_sequence(c, actions, confirm_token=confirm_token)
+    except guard.GuardError as e:
+        return [_guard_message(e)]
+    return "ran: " + "; ".join(results)
 
 
 @mcp.tool()
@@ -175,8 +215,16 @@ def confirm_action(token: str) -> str:
     return f"confirmed and executed: {pending['reason']}"
 
 
-def main() -> None:
-    mcp.run()
+def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Run the MCP server. transport="stdio" (default) for a local client that
+    spawns this process; "streamable-http" to host it as a network service on
+    host:port (e.g. on a LAN box behind Tailscale — never expose it publicly)."""
+    if transport == "streamable-http":
+        mcp.settings.host = host
+        mcp.settings.port = port
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":

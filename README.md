@@ -57,11 +57,13 @@ silently.
 ```bash
 pikvm status                 # reachability, ATX power LED, keyboard/mouse online
 pikvm screenshot -o s.jpg    # capture screen -> JPEG (+ resolution); --ocr for text
+pikvm screenshot --crop 750,240,730,590   # native-res region only (cheap, still legible)
+pikvm screenshot --settle    # wait until the screen stops changing, then capture
 pikvm move 640 400           # move mouse to screen pixels
 pikvm click left 640 400     # click (--double for double-click)
 pikvm drag 100 100 400 400   # left-drag
 pikvm wheel -3               # scroll (negative = down)
-pikvm type "hello world"     # type text (server-side keymap)
+pikvm type "uname -a" --enter  # type text then press Enter (type-and-run)
 pikvm key "ctrl+alt+t"       # press a combo; also: pikvm key enter
 pikvm atx power              # power control (guarded)
 pikvm confirm <TOKEN>        # approve a blocked action
@@ -81,10 +83,36 @@ Register with Claude Code:
 claude mcp add pikvm -- pikvm mcp
 ```
 
-Tools: `screenshot`, `screen_ocr`, `system_status`, `mouse_move`,
-`mouse_click`, `mouse_drag`, `wheel`, `type_text`, `press_keys`, `atx_action`,
+Tools: `screenshot` (with `crop`/`settle`), `wait_for_stable`, `screen_ocr`,
+`system_status`, `mouse_move`, `mouse_click`, `mouse_drag`, `wheel`,
+`type_text` (with `submit`), `run_actions`, `press_keys`, `atx_action`,
 `confirm_action`. A blocked action returns a token to relay to the human;
 call `confirm_action(token)` only after they approve.
+
+### Token-efficient capture
+
+Screenshots dominate token cost (~1,500 per full 1080p frame). To keep it down
+without losing legibility: **crop** to a native-resolution region
+(`screenshot(crop=[x,y,w,h])`) rather than downscaling; use `screen_ocr` for
+text-only reads; use **`settle`** / `wait_for_stable` to capture once the screen
+stops changing (no blind delays); and batch trusted input with `run_actions` /
+`type_text(submit=True)` to cut round-trips.
+
+### Hosting the MCP server
+
+Local (default): the client spawns it over stdio — `claude mcp add pikvm -- pikvm mcp`.
+
+Remote (drive from a cloud/off-LAN agent): run it as an HTTP service on an
+always-on box that shares the PiKVM's LAN, and reach it over a private mesh:
+
+```bash
+pikvm mcp --http --bind 0.0.0.0 --port 8000     # serves at http://<host>:8000/mcp
+```
+
+**Never expose this on the public internet** — it can power-cycle and type into
+the target. Put it behind Tailscale/WireGuard with the confirm-token guardrails
+as the backstop. On a headless host, keyring won't have a daemon, so supply
+credentials via `PIKVM_*` env vars or the TOML file there.
 
 ## Architecture
 

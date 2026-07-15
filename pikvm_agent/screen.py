@@ -23,13 +23,20 @@ RESOLUTION_CACHE = STATE_DIR / "resolution.json"
 
 WAKE_ATTEMPTS = 10  # 1s apart, while holding /api/ws open to resume the streamer
 
+# Defaults for wait_until_stable(): a frame-diff below STABLE_THRESHOLD (mean
+# per-pixel 0..255 difference of a downscaled grayscale) counts as "settled".
+STABLE_THRESHOLD = 1.5
+STABLE_POLL = 0.4
+STABLE_TIMEOUT = 8.0
+
 
 @dataclass
 class Snapshot:
     jpeg: bytes
     width: int
     height: int
-    source: str  # "snapshot" | "stream"
+    source: str  # "snapshot" | "stream" | "snapshot-wake"
+    crop: tuple[int, int, int, int] | None = None  # (x, y, w, h) in full-screen px
 
     def save(self, path: Path | None = None) -> Path:
         if path is None:
@@ -59,7 +66,24 @@ def _try_snapshot(client: PiKvmClient) -> bytes | None:
     return body if content_type.startswith("image/") else None
 
 
-def capture(client: PiKvmClient) -> Snapshot:
+def _crop_jpeg(jpeg: bytes, crop: tuple[int, int, int, int]) -> bytes:
+    """Crop (x, y, w, h) from a JPEG, re-encoding at native resolution.
+
+    Cropping keeps full pixel fidelity of the region (unlike downscaling) while
+    cutting the image-token cost roughly in proportion to the area kept.
+    """
+    x, y, w, h = crop
+    with Image.open(io.BytesIO(jpeg)) as img:
+        region = img.crop((x, y, x + w, y + h))
+        out = io.BytesIO()
+        region.convert("RGB").save(out, format="JPEG", quality=90)
+        return out.getvalue()
+
+
+def capture(client: PiKvmClient, crop: tuple[int, int, int, int] | None = None) -> Snapshot:
+    """Capture the screen. `crop` = (x, y, w, h) in full-screen pixels returns
+    just that region at native resolution (coordinates elsewhere still refer to
+    the full screen; the resolution cache always holds the full dimensions)."""
     body = _try_snapshot(client)
     source = "snapshot"
 
@@ -90,9 +114,73 @@ def capture(client: PiKvmClient) -> Snapshot:
                 "On the PiKVM, `systemctl start kvmd-streamer` may be needed."
             ) from None
 
-    w, h = _dimensions(body)
-    _save_resolution(w, h)
-    return Snapshot(jpeg=body, width=w, height=h, source=source)
+    full_w, full_h = _dimensions(body)
+    _save_resolution(full_w, full_h)
+
+    if crop is not None:
+        body = _crop_jpeg(body, crop)
+        w, h = _dimensions(body)
+        return Snapshot(jpeg=body, width=w, height=h, source=source, crop=crop)
+    return Snapshot(jpeg=body, width=full_w, height=full_h, source=source)
+
+
+def _frame_diff(jpeg_a: bytes, jpeg_b: bytes) -> float:
+    """Mean per-pixel difference (0..255) of two frames, downscaled to a small
+    grayscale thumbnail. Cheap motion metric — ~0 when the screen is static."""
+    from PIL import ImageChops, ImageStat
+
+    with Image.open(io.BytesIO(jpeg_a)) as a, Image.open(io.BytesIO(jpeg_b)) as b:
+        ta = a.convert("L").resize((64, 36))
+        tb = b.convert("L").resize((64, 36))
+        return ImageStat.Stat(ImageChops.difference(ta, tb)).mean[0]
+
+
+def wait_until_stable(
+    client: PiKvmClient,
+    timeout: float = STABLE_TIMEOUT,
+    poll: float = STABLE_POLL,
+    threshold: float = STABLE_THRESHOLD,
+    crop: tuple[int, int, int, int] | None = None,
+) -> tuple[Snapshot, bool]:
+    """Poll frames until the screen stops changing, then return a snapshot.
+
+    Replaces blind `sleep` after an action: returns as soon as two consecutive
+    frames differ by less than `threshold`. Returns (snapshot, settled) where
+    `settled` is False if `timeout` elapsed while still changing.
+    """
+    deadline = time.monotonic() + timeout
+    settled = False
+    prev: bytes | None = None
+    # Keep ONE socket open for the whole loop: kvmd suspends the streamer the
+    # moment no client is attached, so a fresh socket per poll would race the
+    # re-suspend and keep getting 503s (seen live on kvmd 4.132).
+    with client.open_ws():
+        for _ in range(WAKE_ATTEMPTS):  # first frame, waking the streamer if needed
+            prev = _try_snapshot(client)
+            if prev is not None:
+                break
+            time.sleep(1)
+        while prev is not None and time.monotonic() < deadline:
+            time.sleep(poll)
+            cur = _try_snapshot(client)
+            if cur is None:
+                continue
+            if _frame_diff(prev, cur) < threshold:
+                settled = True
+                prev = cur
+                break
+            prev = cur
+
+    if prev is None:  # streamer never woke — fall back to the full capture path
+        prev = capture(client).jpeg
+
+    full_w, full_h = _dimensions(prev)
+    _save_resolution(full_w, full_h)
+    if crop is not None:
+        cropped = _crop_jpeg(prev, crop)
+        cw, ch = _dimensions(cropped)
+        return Snapshot(cropped, cw, ch, "settled" if settled else "unsettled", crop), settled
+    return Snapshot(prev, full_w, full_h, "settled" if settled else "unsettled"), settled
 
 
 def capture_ocr(client: PiKvmClient) -> str:
