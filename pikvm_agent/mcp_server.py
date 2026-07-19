@@ -135,14 +135,36 @@ def _image(snap) -> ImageContent:
     )
 
 
+def _frame_text(snap) -> TextContent:
+    """Tell the agent the frame's pixel dimensions and coordinate space, so it
+    never has to guess (the streamer's frame size can differ from the host's
+    native resolution, and can even change under load)."""
+    if snap.crop is None:
+        return TextContent(type="text", text=(
+            f"frame {snap.width}×{snap.height}px — mouse-click and crop "
+            f"coordinates are in this pixel space."))
+    x, y, w, h = snap.crop
+    full = screen.cached_full_resolution()
+    fw, fh = full if full else ("?", "?")
+    return TextContent(type="text", text=(
+        f"crop {w}×{h}px from the {fw}×{fh}px full frame at origin ({x},{y}). "
+        f"To click something you see here, map back to full-frame coordinates: "
+        f"full_x = {x} + local_x, full_y = {y} + local_y."))
+
+
+def _capture_result(snap) -> list:
+    return [_frame_text(snap), _image(snap)]
+
+
 @mcp.tool()
-def screenshot(crop: list[int] | None = None, settle: bool = False) -> ImageContent:
-    """Capture the target's current screen as a JPEG. Use it to see the screen
-    and to verify the result of an action.
+def screenshot(crop: list[int] | None = None, settle: bool = False) -> list:
+    """Capture the target's current screen as a JPEG, returned with a text line
+    giving the frame's pixel dimensions (the coordinate space for clicks/crops —
+    don't assume a resolution, the streamer's frame size can vary).
 
     crop=[x,y,w,h] returns just that region at native resolution — far cheaper
-    in tokens than the full frame with no loss of legibility, and coordinates
-    still refer to the full screen (add the crop origin back when clicking).
+    in tokens than the full frame with no loss of legibility; the text line tells
+    you the crop origin to add back when clicking.
     settle=True waits until the screen stops changing before capturing, instead
     of you guessing a delay after an action."""
     box = tuple(crop) if crop else None
@@ -152,15 +174,15 @@ def screenshot(crop: list[int] | None = None, settle: bool = False) -> ImageCont
         else:
             snap = screen.capture(c, crop=box)
         return snap
-    return _image(_with_session(body))
+    return _capture_result(_with_session(body))
 
 
 @mcp.tool()
-def wait_for_stable(timeout: float = 8.0, crop: list[int] | None = None) -> ImageContent:
+def wait_for_stable(timeout: float = 8.0, crop: list[int] | None = None) -> list:
     """Wait until the screen stops changing (frame-diff), then return a
-    screenshot. Use after an action instead of a blind delay."""
+    screenshot (with frame dimensions). Use after an action instead of a blind delay."""
     box = tuple(crop) if crop else None
-    return _image(_with_session(lambda c: screen.wait_until_stable(c, timeout=timeout, crop=box)[0]))
+    return _capture_result(_with_session(lambda c: screen.wait_until_stable(c, timeout=timeout, crop=box)[0]))
 
 
 @mcp.tool()
@@ -170,18 +192,30 @@ def screen_ocr() -> str:
 
 
 @mcp.tool()
-def mouse_move(x: float, y: float) -> str:
-    """Move the mouse to pixel coordinates (x, y) on the target screen."""
-    _with_session(lambda c: hid.mouse_move(c, x, y, ws=c.session_ws()))
+def set_mouse_humanize(enabled: bool = True) -> str:
+    """Turn human-like mouse motion on/off for later clicks and moves: curved,
+    eased, jittered cursor paths with variable timing instead of instant jumps.
+    Slower, but produces natural-looking input for UIs that react to robotic
+    input. Off by default; the setting persists for the session."""
+    hid.HUMANIZE = enabled
+    return f"human-like mouse motion {'enabled' if enabled else 'disabled'}"
+
+
+@mcp.tool()
+def mouse_move(x: float, y: float, human: bool | None = None) -> str:
+    """Move the mouse to pixel coordinates (x, y). human=True forces a natural
+    curved path for this move (overrides the session default)."""
+    _with_session(lambda c: hid.mouse_move(c, x, y, ws=c.session_ws(), human=human))
     return f"moved to ({x}, {y})"
 
 
 @mcp.tool()
 def mouse_click(button: str = "left", x: float | None = None, y: float | None = None,
-                double: bool = False) -> str:
+                double: bool = False, human: bool | None = None) -> str:
     """Click a mouse button ("left"/"right"/"middle"), optionally moving to
-    (x, y) first. Set double=True for a double-click."""
-    _with_session(lambda c: hid.click(c, button, x, y, double=double, ws=c.session_ws()))
+    (x, y) first. Set double=True for a double-click. human=True forces a
+    natural curved approach + variable press timing for this click."""
+    _with_session(lambda c: hid.click(c, button, x, y, double=double, ws=c.session_ws(), human=human))
     return f"{'double-' if double else ''}{button} click"
 
 
@@ -241,7 +275,7 @@ def run_actions(actions: list[dict], confirm_token: str | None = None,
         if settle:
             return screen.wait_until_stable(c, crop=box)[0]
         return screen.capture(c, crop=box)
-    return [TextContent(type="text", text=text), _image(_with_session(cap))]
+    return [TextContent(type="text", text=text), *_capture_result(_with_session(cap))]
 
 
 @mcp.tool()

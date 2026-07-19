@@ -58,6 +58,15 @@ def _save_resolution(width: int, height: int) -> None:
     RESOLUTION_CACHE.write_text(json.dumps({"width": width, "height": height}))
 
 
+def cached_full_resolution() -> tuple[int, int] | None:
+    """The last captured full-frame dimensions (the coordinate space for mouse
+    clicks and crops), or None if nothing has been captured yet."""
+    if RESOLUTION_CACHE.exists():
+        d = json.loads(RESOLUTION_CACHE.read_text())
+        return d["width"], d["height"]
+    return None
+
+
 def _try_snapshot(client: PiKvmClient) -> bytes | None:
     try:
         body, content_type = client.get_bytes("/api/streamer/snapshot")

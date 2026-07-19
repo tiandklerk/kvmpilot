@@ -10,11 +10,19 @@ state dir) so mouse commands don't need a capture each time.
 from __future__ import annotations
 
 import json
+import math
+import os
+import random
 import time
 from contextlib import contextmanager
 
 from . import guard, keymap
 from .client import HidWebSocket, PiKvmClient, PiKvmError
+
+# Human-like cursor motion: off by default (instant absolute jumps are faster for
+# ordinary UI work). Turn on per session — e.g. for inputs that watch for robotic
+# input — via the env var, the MCP `set_mouse_humanize` tool, or a per-call arg.
+HUMANIZE = os.environ.get("PIKVM_HUMANIZE_MOUSE", "").lower() in ("1", "true", "yes")
 
 
 @contextmanager
@@ -117,12 +125,49 @@ def ensure_absolute_mouse(client: PiKvmClient, auto_switch: bool = False) -> str
     )
 
 
-def mouse_move(client: PiKvmClient, x: float, y: float, ws: HidWebSocket | None = None) -> None:
+def _humanized_points(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
+    """A slightly-curved, eased, jittered path of pixel points from (x0,y0) to
+    (x1,y1) — so cursor motion looks like a hand, not an instant teleport."""
+    dist = math.hypot(x1 - x0, y1 - y0)
+    steps = max(6, min(40, int(dist / 25)))
+    # bow the path sideways so it isn't a dead-straight ruler line
+    nx, ny = -(y1 - y0), (x1 - x0)
+    norm = math.hypot(nx, ny) or 1.0
+    bow = random.uniform(-1, 1) * min(40.0, dist * 0.15)
+    cx, cy = (x0 + x1) / 2 + nx / norm * bow, (y0 + y1) / 2 + ny / norm * bow
+    pts: list[tuple[float, float]] = []
+    for i in range(1, steps + 1):
+        e = (i / steps) ** 2 * (3 - 2 * (i / steps))  # smoothstep ease-in-out
+        px = (1 - e) ** 2 * x0 + 2 * (1 - e) * e * cx + e ** 2 * x1
+        py = (1 - e) ** 2 * y0 + 2 * (1 - e) * e * cy + e ** 2 * y1
+        pts.append((px + random.uniform(-1.5, 1.5), py + random.uniform(-1.5, 1.5)))
+    pts[-1] = (x1, y1)  # land exactly on target
+    return pts
+
+
+def _move_to(client: PiKvmClient, sock: HidWebSocket, x: float, y: float,
+             w: int, h: int, human: bool) -> None:
+    """Position the cursor at pixel (x,y): one absolute jump, or a human-like path."""
+    if human:
+        x0, y0 = getattr(client, "_last_mouse_px", None) or (w / 2, h / 2)
+        for px, py in _humanized_points(x0, y0, x, y):
+            sock.mouse_move(*pixel_to_kvm(px, py, w, h))
+            time.sleep(random.uniform(0.006, 0.02))
+    else:
+        sock.mouse_move(*pixel_to_kvm(x, y, w, h))
+    client._last_mouse_px = (x, y)
+
+
+def _use_human(human: bool | None) -> bool:
+    return HUMANIZE if human is None else human
+
+
+def mouse_move(client: PiKvmClient, x: float, y: float, ws: HidWebSocket | None = None,
+               human: bool | None = None) -> None:
     ensure_absolute_mouse(client)
     w, h = get_resolution(client)
-    kx, ky = pixel_to_kvm(x, y, w, h)
     with _ws_for(client, ws) as sock:
-        sock.mouse_move(kx, ky)
+        _move_to(client, sock, x, y, w, h, _use_human(human))
         time.sleep(FLUSH_DELAY)
 
 
@@ -133,37 +178,43 @@ def click(
     y: float | None = None,
     double: bool = False,
     ws: HidWebSocket | None = None,
+    human: bool | None = None,
 ) -> None:
     if button not in ("left", "right", "middle"):
         raise PiKvmError(f"unknown mouse button {button!r}")
     ensure_absolute_mouse(client)
     w, h = get_resolution(client)
+    hu = _use_human(human)
     with _ws_for(client, ws) as sock:
         if x is not None and y is not None:
-            sock.mouse_move(*pixel_to_kvm(x, y, w, h))
-            time.sleep(KEY_DELAY)
+            _move_to(client, sock, x, y, w, h, hu)
+            time.sleep(random.uniform(0.05, 0.14) if hu else KEY_DELAY)  # settle before pressing
         for _ in range(2 if double else 1):
             sock.mouse_button(button, True)
-            time.sleep(KEY_DELAY)
+            time.sleep(random.uniform(0.04, 0.11) if hu else KEY_DELAY)  # press dwell
             sock.mouse_button(button, False)
             time.sleep(KEY_DELAY)
         time.sleep(FLUSH_DELAY)
 
 
 def drag(client: PiKvmClient, x1: float, y1: float, x2: float, y2: float, steps: int = 12,
-         ws: HidWebSocket | None = None) -> None:
+         ws: HidWebSocket | None = None, human: bool | None = None) -> None:
     ensure_absolute_mouse(client)
     w, h = get_resolution(client)
+    hu = _use_human(human)
     with _ws_for(client, ws) as sock:
-        sock.mouse_move(*pixel_to_kvm(x1, y1, w, h))
+        _move_to(client, sock, x1, y1, w, h, hu)
         time.sleep(KEY_DELAY)
         sock.mouse_button("left", True)
         time.sleep(KEY_DELAY)
         for i in range(1, steps + 1):
             t = i / steps
-            sock.mouse_move(*pixel_to_kvm(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, w, h))
-            time.sleep(KEY_DELAY)
+            jx = random.uniform(-1.5, 1.5) if hu else 0.0
+            jy = random.uniform(-1.5, 1.5) if hu else 0.0
+            sock.mouse_move(*pixel_to_kvm(x1 + (x2 - x1) * t + jx, y1 + (y2 - y1) * t + jy, w, h))
+            time.sleep(random.uniform(0.01, 0.03) if hu else KEY_DELAY)
         sock.mouse_button("left", False)
+        client._last_mouse_px = (x2, y2)
         time.sleep(FLUSH_DELAY)
 
 
@@ -283,14 +334,14 @@ def run_sequence(client: PiKvmClient, actions: list[dict],
         for i, a in enumerate(actions):
             kind = a.get("action")
             if kind == "move":
-                mouse_move(client, a["x"], a["y"], ws=sock)
+                mouse_move(client, a["x"], a["y"], ws=sock, human=a.get("human"))
                 results.append(f"move ({a['x']},{a['y']})")
             elif kind == "click":
                 click(client, a.get("button", "left"), a.get("x"), a.get("y"),
-                      double=a.get("double", False), ws=sock)
+                      double=a.get("double", False), ws=sock, human=a.get("human"))
                 results.append(f"{a.get('button', 'left')} click")
             elif kind == "drag":
-                drag(client, a["x1"], a["y1"], a["x2"], a["y2"], ws=sock)
+                drag(client, a["x1"], a["y1"], a["x2"], a["y2"], ws=sock, human=a.get("human"))
                 results.append("drag")
             elif kind == "wheel":
                 wheel(client, a["dy"], ws=sock)

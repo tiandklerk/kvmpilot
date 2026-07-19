@@ -73,6 +73,39 @@ def test_borrowed_socket_actions_land(mock_device):
 
 # -- one socket per batch -----------------------------------------------------
 
+def test_humanized_move_emits_a_path(mock_device):
+    with _client() as c:
+        hid.mouse_move(c, 300, 200, human=True)
+    moves = [e for e in _wait_events(mock_device, 5) if e["kind"] == "mouse_move"]
+    assert len(moves) >= 5  # a curved path, not one instant jump
+
+
+def test_normal_move_is_a_single_jump(mock_device):
+    with _client() as c:
+        hid.mouse_move(c, 300, 200, human=False)
+    moves = [e for e in mock_device.events() if e["kind"] == "mouse_move"]
+    assert len(moves) == 1
+
+
+# -- frame dimensions surfaced to the agent -----------------------------------
+
+def test_frame_text_reports_full_dimensions(mock_device):
+    from pikvm_agent import mcp_server
+    with _client() as c:
+        snap = screen.capture(c)
+    txt = mcp_server._frame_text(snap)
+    assert str(snap.width) in txt.text and "coordinates are in this pixel space" in txt.text
+
+
+def test_frame_text_crop_gives_origin_mapping(mock_device):
+    from pikvm_agent import mcp_server
+    with _client() as c:
+        screen.capture(c)                       # populate the full-resolution cache
+        snap = screen.capture(c, crop=(100, 50, 200, 150))
+    txt = mcp_server._frame_text(snap)
+    assert "origin (100,50)" in txt.text and "full_x = 100 + local_x" in txt.text
+
+
 def test_run_sequence_batches_four_clicks(mock_device):
     tiles = [{"action": "click", "x": x, "y": y}
              for x, y in [(220, 390), (350, 520), (480, 520), (220, 650)]]

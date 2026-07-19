@@ -38,6 +38,11 @@ keyhole. Guidance:
   a known sub-sequence costs one round-trip, then verify with one screenshot.
 Coordinates always refer to the full screen, even after a crop.
 
+Each screenshot **reports its frame's pixel dimensions** in an accompanying text
+line — use them; **don't assume 1920×1080**, the streamer's frame size can differ
+from the host's native resolution and can even change under load. For a crop, the
+text gives the origin to add back to your click coordinates.
+
 ## Timed and multi-target UIs (captchas, rapid dialogs)
 
 Some UIs punish a slow loop: an image-grid captcha expires in ~60s, a toast
@@ -56,6 +61,12 @@ still applies, but **collapse the round-trips**:
 
 The MCP server keeps a warm connection, so captures are near-instant after the
 first — spend that speed on deciding well, not on re-looking.
+
+If the UI reacts to *robotic* input (e.g. a reCAPTCHA risk check flags instant
+cursor jumps), call `set_mouse_humanize(true)` so clicks travel a natural curved
+path with variable timing instead of teleporting. It affects only behavioural
+heuristics — it won't help you read the tiles, and it's slower, so leave it off
+for ordinary UI work.
 
 Ethics: only attempt captchas on a vendor's own demo/test page, as a capability
 check — never to defeat a real service's protection.
