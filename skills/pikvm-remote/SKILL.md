@@ -38,10 +38,14 @@ keyhole. Guidance:
   a known sub-sequence costs one round-trip, then verify with one screenshot.
 Coordinates always refer to the full screen, even after a crop.
 
-Each screenshot **reports its frame's pixel dimensions** in an accompanying text
-line — use them; **don't assume 1920×1080**, the streamer's frame size can differ
-from the host's native resolution and can even change under load. For a crop, the
-text gives the origin to add back to your click coordinates.
+Every full-frame screenshot is delivered at the host's **stable resolution** (the
+harness normalizes it, so the coordinate space never shifts even when the Pi's
+encoder degrades a frame under load) and at **native resolution, quality-reduced
+not downscaled** — so a full frame stays legible. Each screenshot reports its
+pixel dimensions in an accompanying text line; for a crop it also gives the origin
+to add back to your click coordinates. Practical upshot: **classify from one full
+frame; reach for a crop only to re-read a single genuinely-ambiguous spot**, not
+as a routine step.
 
 ## Timed and multi-target UIs (captchas, rapid dialogs)
 

@@ -75,6 +75,37 @@ def _try_snapshot(client: PiKvmClient) -> bytes | None:
     return body if content_type.startswith("image/") else None
 
 
+def host_resolution(client: PiKvmClient) -> tuple[int, int] | None:
+    """The stable source (host) resolution from kvmd's streamer state — the true
+    coordinate space. Unlike a snapshot's pixel size, this does NOT change when
+    the Pi's encoder degrades the delivered frame under load, so it's the right
+    reference for mapping clicks. Cached on the client. None if unavailable."""
+    cached = getattr(client, "_host_res", None)
+    if cached is not None:
+        return cached
+    try:
+        res = (client._get_json("/api/streamer")
+               .get("result", {}).get("streamer", {}).get("source", {}).get("resolution"))
+        if res and res.get("width") and res.get("height"):
+            client._host_res = (int(res["width"]), int(res["height"]))
+            return client._host_res
+    except (PiKvmError, KeyError, TypeError, ValueError):
+        pass
+    return None
+
+
+def _normalize_to_host(body: bytes, host: tuple[int, int]) -> bytes:
+    """Resize a frame to the host resolution so the agent always works in one
+    coordinate space, even when the encoder delivered a downscaled frame. No-op
+    when the frame already matches (the fast, crisp path)."""
+    if _dimensions(body) == host:
+        return body
+    with Image.open(io.BytesIO(body)) as img:
+        out = io.BytesIO()
+        img.convert("RGB").resize(host, Image.LANCZOS).save(out, format="JPEG", quality=85)
+        return out.getvalue()
+
+
 def _crop_jpeg(jpeg: bytes, crop: tuple[int, int, int, int]) -> bytes:
     """Crop (x, y, w, h) from a JPEG, re-encoding at native resolution.
 
@@ -123,7 +154,14 @@ def capture(client: PiKvmClient, crop: tuple[int, int, int, int] | None = None) 
                 "On the PiKVM, `systemctl start kvmd-streamer` may be needed."
             ) from None
 
-    full_w, full_h = _dimensions(body)
+    # Normalize to the stable host resolution so coordinates are consistent even
+    # when the encoder downscaled this frame; fall back to the frame's own size.
+    host = host_resolution(client)
+    if host is not None:
+        body = _normalize_to_host(body, host)
+        full_w, full_h = host
+    else:
+        full_w, full_h = _dimensions(body)
     _save_resolution(full_w, full_h)
 
     if crop is not None:
@@ -183,7 +221,12 @@ def wait_until_stable(
     if prev is None:  # streamer never woke — fall back to the full capture path
         prev = capture(client).jpeg
 
-    full_w, full_h = _dimensions(prev)
+    host = host_resolution(client)
+    if host is not None:
+        prev = _normalize_to_host(prev, host)
+        full_w, full_h = host
+    else:
+        full_w, full_h = _dimensions(prev)
     _save_resolution(full_w, full_h)
     if crop is not None:
         cropped = _crop_jpeg(prev, crop)
@@ -192,20 +235,22 @@ def wait_until_stable(
     return Snapshot(prev, full_w, full_h, "settled" if settled else "unsettled"), settled
 
 
-def fit_jpeg(jpeg: bytes, max_bytes: int = 45_000) -> bytes:
-    """Shrink a JPEG to fit a byte budget for transport to the agent.
+def fit_jpeg(jpeg: bytes, max_bytes: int = 150_000) -> bytes:
+    """Keep a frame's transport size reasonable by reducing JPEG *quality* only —
+    never resolution. Changing dimensions would shift the agent's coordinate
+    space (clicks are mapped against the frame size), so we hold the resolution
+    fixed and just compress harder. Frames already under budget (e.g. native
+    crops, or a well-compressing UI frame) are returned untouched.
 
-    Some MCP clients truncate an oversized image payload (seen: a ~25k-token cap
-    that silently corrupts the frame). We reduce *quality* first — this keeps the
-    native resolution, so text stays legible — and only downscale as a last
-    resort. Frames already under budget (e.g. native-resolution crops) are
-    returned untouched."""
+    The cap is generous because an image costs the model tokens by its pixel
+    dimensions, not its byte size — the budget only guards against a client
+    truncating an unusually large payload."""
     if len(jpeg) <= max_bytes:
         return jpeg
     with Image.open(io.BytesIO(jpeg)) as img:
         rgb = img.convert("RGB")
     smallest = jpeg
-    for q in (80, 70, 60, 50, 40):
+    for q in (80, 70, 60, 50):
         out = io.BytesIO()
         rgb.save(out, format="JPEG", quality=q, optimize=True)
         data = out.getvalue()
@@ -213,17 +258,7 @@ def fit_jpeg(jpeg: bytes, max_bytes: int = 45_000) -> bytes:
             smallest = data
         if len(data) <= max_bytes:
             return data
-    w, h = rgb.size
-    for scale in (0.7, 0.5, 0.35, 0.25, 0.18):  # quality alone wasn't enough
-        nw, nh = max(320, int(w * scale)), max(180, int(h * scale))
-        out = io.BytesIO()
-        rgb.resize((nw, nh), Image.LANCZOS).save(out, format="JPEG", quality=55, optimize=True)
-        data = out.getvalue()
-        if len(data) < len(smallest):
-            smallest = data
-        if len(data) <= max_bytes:
-            return data
-    return smallest  # best effort — still smaller than the original
+    return smallest  # best effort at fixed resolution — never downscaled
 
 
 def capture_ocr(client: PiKvmClient) -> str:

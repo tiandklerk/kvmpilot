@@ -56,6 +56,11 @@ class MockKvmd:
         self.snapshot_churn = 0  # >0: return N changing frames (for settle tests)
         frame = frame_file or DEFAULT_FRAME
         self.frame_bytes = frame.read_bytes() if frame.exists() else _make_fallback_frame()
+        # host/source resolution reported by /api/streamer; defaults to the frame
+        # size so tests don't normalize unless they set a mismatch on purpose
+        from PIL import Image
+        with Image.open(io.BytesIO(self.frame_bytes)) as _im:
+            self.source_resolution = list(_im.size)
 
     # -- helpers -------------------------------------------------------------
 
@@ -131,6 +136,13 @@ class MockKvmd:
                                       "available": self.mouse_outputs_available}},
             },
         })
+
+    async def streamer(self, request: web.Request) -> web.Response:
+        if err := self._require_auth(request):
+            return err
+        w, h = self.source_resolution
+        return web.json_response({"ok": True, "result": {
+            "streamer": {"source": {"online": True, "resolution": {"width": w, "height": h}}}}})
 
     async def set_params(self, request: web.Request) -> web.Response:
         if err := self._require_auth(request):
@@ -246,6 +258,7 @@ class MockKvmd:
         app.router.add_post("/api/atx/click", self.atx_click)
         app.router.add_post("/api/hid/print", self.hid_print)
         app.router.add_post("/api/hid/set_params", self.set_params)
+        app.router.add_get("/api/streamer", self.streamer)
         app.router.add_post("/api/hid/events/send_key", self.send_key)
         app.router.add_get("/api/streamer/snapshot", self.snapshot)
         app.router.add_get("/stream", self.stream)

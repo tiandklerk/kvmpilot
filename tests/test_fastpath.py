@@ -37,12 +37,12 @@ def _noisy_jpeg(w=1920, h=1080) -> bytes:
     return out.getvalue()
 
 
-def test_fit_jpeg_shrinks_oversized_frame():
-    big = _noisy_jpeg()
-    assert len(big) > 45_000
-    fitted = screen.fit_jpeg(big, max_bytes=45_000)
-    assert len(fitted) <= 45_000
-    Image.open(io.BytesIO(fitted)).verify()  # still a valid JPEG
+def test_fit_jpeg_compresses_without_changing_resolution():
+    big = _noisy_jpeg(1920, 1080)
+    assert len(big) > 60_000
+    fitted = screen.fit_jpeg(big, max_bytes=60_000)
+    assert len(fitted) < len(big)                      # compressed
+    assert Image.open(io.BytesIO(fitted)).size == (1920, 1080)  # resolution held fixed
 
 
 def test_fit_jpeg_leaves_small_frames_untouched():
@@ -88,6 +88,24 @@ def test_normal_move_is_a_single_jump(mock_device):
 
 
 # -- frame dimensions surfaced to the agent -----------------------------------
+
+def test_capture_normalizes_to_host_resolution(mock_device):
+    # encoder "downscaled": snapshot is 1280×720 but the host source is 1920×1080.
+    # capture must return the frame at the stable host resolution so click
+    # coordinates stay in one space regardless of the delivered frame size.
+    mock_device.kvmd.source_resolution = [1920, 1080]
+    with _client() as c:
+        snap = screen.capture(c)
+    assert (snap.width, snap.height) == (1920, 1080)
+    assert screen.cached_full_resolution() == (1920, 1080)
+
+
+def test_capture_passthrough_when_frame_matches_host(mock_device):
+    # frame already matches host res (both 1280×720) -> no re-encode needed
+    with _client() as c:
+        snap = screen.capture(c)
+    assert (snap.width, snap.height) == (1280, 720)
+
 
 def test_frame_text_reports_full_dimensions(mock_device):
     from pikvm_agent import mcp_server
