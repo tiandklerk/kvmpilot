@@ -38,6 +38,28 @@ keyhole. Guidance:
   a known sub-sequence costs one round-trip, then verify with one screenshot.
 Coordinates always refer to the full screen, even after a crop.
 
+## Timed and multi-target UIs (captchas, rapid dialogs)
+
+Some UIs punish a slow loop: an image-grid captcha expires in ~60s, a toast
+vanishes, a challenge reloads under you. The screenshot→decide→act→verify loop
+still applies, but **collapse the round-trips**:
+
+1. **One capture, decide everything.** Take a single frame (crop to the widget —
+   a captcha popup is ~400×550px, no need for the full screen). Classify *all*
+   the tiles / plan *all* the clicks from that one image. Do **not** take a
+   separate screenshot per tile to double-check — that per-look latency is what
+   blows the timer (it's the single most common reason these fail).
+2. **Batch the clicks, verify once.** Use `run_actions` with `screenshot=true`
+   (and a `crop`) to click every target *and* get the result frame back in **one
+   call**: e.g. click four tiles then see the grid — one round-trip, not five.
+3. **Then** read the returned frame and, if needed, do one more batched pass.
+
+The MCP server keeps a warm connection, so captures are near-instant after the
+first — spend that speed on deciding well, not on re-looking.
+
+Ethics: only attempt captchas on a vendor's own demo/test page, as a capability
+check — never to defeat a real service's protection.
+
 ## Choosing a device
 
 If several PiKVMs are configured (`pikvm profiles`), pass `--profile NAME` (or
@@ -112,6 +134,7 @@ to an audit log regardless.
 The same capabilities are exposed as MCP tools (`pikvm mcp`): `screenshot`
 (with `crop` and `settle`) returns the image inline, plus `wait_for_stable`,
 `screen_ocr`, `system_status`, `mouse_move`, `mouse_click`, `mouse_drag`,
-`wheel`, `type_text` (with `submit`), `run_actions`, `press_keys`,
+`wheel`, `type_text` (with `submit`), `run_actions` (with `screenshot`/`crop`/
+`settle` to act **and** get a verification frame in one call), `press_keys`,
 `atx_action`, `confirm_action`. Guardrails behave identically — a blocked
 tool returns a token to relay to the human.

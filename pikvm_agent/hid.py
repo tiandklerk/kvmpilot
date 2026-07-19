@@ -11,9 +11,22 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import contextmanager
 
 from . import guard, keymap
-from .client import PiKvmClient, PiKvmError
+from .client import HidWebSocket, PiKvmClient, PiKvmError
+
+
+@contextmanager
+def _ws_for(client: PiKvmClient, ws: HidWebSocket | None):
+    """Yield a socket for one action. If `ws` is given (a borrowed persistent
+    session socket), use it and leave it open; otherwise open a fresh one and
+    close it on exit — preserving the original one-shot CLI behaviour."""
+    if ws is not None:
+        yield ws
+    else:
+        with client.open_ws() as fresh:
+            yield fresh
 
 KEY_DELAY = 0.02   # seconds between HID events, mirroring pikonnect's pacing
 FLUSH_DELAY = 0.1  # let kvmd process the final event before the socket closes
@@ -88,12 +101,12 @@ def ensure_absolute_mouse(client: PiKvmClient) -> str:
     )
 
 
-def mouse_move(client: PiKvmClient, x: float, y: float) -> None:
+def mouse_move(client: PiKvmClient, x: float, y: float, ws: HidWebSocket | None = None) -> None:
     ensure_absolute_mouse(client)
     w, h = get_resolution(client)
     kx, ky = pixel_to_kvm(x, y, w, h)
-    with client.open_ws() as ws:
-        ws.mouse_move(kx, ky)
+    with _ws_for(client, ws) as sock:
+        sock.mouse_move(kx, ky)
         time.sleep(FLUSH_DELAY)
 
 
@@ -103,50 +116,53 @@ def click(
     x: float | None = None,
     y: float | None = None,
     double: bool = False,
+    ws: HidWebSocket | None = None,
 ) -> None:
     if button not in ("left", "right", "middle"):
         raise PiKvmError(f"unknown mouse button {button!r}")
     ensure_absolute_mouse(client)
     w, h = get_resolution(client)
-    with client.open_ws() as ws:
+    with _ws_for(client, ws) as sock:
         if x is not None and y is not None:
-            ws.mouse_move(*pixel_to_kvm(x, y, w, h))
+            sock.mouse_move(*pixel_to_kvm(x, y, w, h))
             time.sleep(KEY_DELAY)
         for _ in range(2 if double else 1):
-            ws.mouse_button(button, True)
+            sock.mouse_button(button, True)
             time.sleep(KEY_DELAY)
-            ws.mouse_button(button, False)
+            sock.mouse_button(button, False)
             time.sleep(KEY_DELAY)
         time.sleep(FLUSH_DELAY)
 
 
-def drag(client: PiKvmClient, x1: float, y1: float, x2: float, y2: float, steps: int = 12) -> None:
+def drag(client: PiKvmClient, x1: float, y1: float, x2: float, y2: float, steps: int = 12,
+         ws: HidWebSocket | None = None) -> None:
     ensure_absolute_mouse(client)
     w, h = get_resolution(client)
-    with client.open_ws() as ws:
-        ws.mouse_move(*pixel_to_kvm(x1, y1, w, h))
+    with _ws_for(client, ws) as sock:
+        sock.mouse_move(*pixel_to_kvm(x1, y1, w, h))
         time.sleep(KEY_DELAY)
-        ws.mouse_button("left", True)
+        sock.mouse_button("left", True)
         time.sleep(KEY_DELAY)
         for i in range(1, steps + 1):
             t = i / steps
-            ws.mouse_move(*pixel_to_kvm(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, w, h))
+            sock.mouse_move(*pixel_to_kvm(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, w, h))
             time.sleep(KEY_DELAY)
-        ws.mouse_button("left", False)
+        sock.mouse_button("left", False)
         time.sleep(FLUSH_DELAY)
 
 
-def wheel(client: PiKvmClient, dy: int, dx: int = 0) -> None:
+def wheel(client: PiKvmClient, dy: int, dx: int = 0, ws: HidWebSocket | None = None) -> None:
     ensure_absolute_mouse(client)
-    with client.open_ws() as ws:
-        ws.mouse_wheel(dx, dy)
+    with _ws_for(client, ws) as sock:
+        sock.mouse_wheel(dx, dy)
         time.sleep(FLUSH_DELAY)
 
 
 # -- keyboard -----------------------------------------------------------------
 
 def type_text(client: PiKvmClient, text: str, force_ws: bool = False,
-              confirm_token: str | None = None, submit: bool = False) -> str:
+              confirm_token: str | None = None, submit: bool = False,
+              ws: HidWebSocket | None = None) -> str:
     """Type text on the target. Prefers server-side /api/hid/print (layout-
     aware, fast); falls back to per-key WebSocket events. Returns the path
     used ("print" or "ws"). Dangerous command text is gated by guardrails.
@@ -169,41 +185,42 @@ def type_text(client: PiKvmClient, text: str, force_ws: bool = False,
         except PiKvmError:
             path = "ws"
     if path == "ws":
-        _type_text_ws(client, text)
+        _type_text_ws(client, text, ws=ws)
 
     if submit:
         # `text` was already gated above; clear the buffer so the Enter isn't
         # re-flagged by the type-then-Enter evasion check.
         guard.clear_typed_buffer()
-        with client.open_ws() as ws:
-            ws.key("Enter", True)
+        with _ws_for(client, ws) as sock:
+            sock.key("Enter", True)
             time.sleep(KEY_DELAY)
-            ws.key("Enter", False)
+            sock.key("Enter", False)
             time.sleep(FLUSH_DELAY)
         guard.audit("key:Enter", "executed", "submit after type")
     return path
 
 
-def _type_text_ws(client: PiKvmClient, text: str) -> None:
-    with client.open_ws() as ws:
+def _type_text_ws(client: PiKvmClient, text: str, ws: HidWebSocket | None = None) -> None:
+    with _ws_for(client, ws) as sock:
         for c in text:
             mapped = keymap.from_char(c)
             if mapped is None:
                 raise PiKvmError(f"cannot type character {c!r} via key events")
             if mapped.shift:
-                ws.key("ShiftLeft", True)
+                sock.key("ShiftLeft", True)
                 time.sleep(KEY_DELAY)
-            ws.key(mapped.key, True)
+            sock.key(mapped.key, True)
             time.sleep(KEY_DELAY)
-            ws.key(mapped.key, False)
+            sock.key(mapped.key, False)
             time.sleep(KEY_DELAY)
             if mapped.shift:
-                ws.key("ShiftLeft", False)
+                sock.key("ShiftLeft", False)
                 time.sleep(KEY_DELAY)
         time.sleep(FLUSH_DELAY)
 
 
-def press_combo(client: PiKvmClient, combo: str, confirm_token: str | None = None) -> list[str]:
+def press_combo(client: PiKvmClient, combo: str, confirm_token: str | None = None,
+                ws: HidWebSocket | None = None) -> list[str]:
     """Press a key combo like "ctrl+alt+del": press in order, release in
     reverse. Returns the kvmd key codes used. Power chords and an Enter that
     would execute a dangerous typed command are gated by guardrails."""
@@ -219,12 +236,12 @@ def press_combo(client: PiKvmClient, combo: str, confirm_token: str | None = Non
         guard.clear_typed_buffer()  # command line submitted; reset the buffer
     guard.audit(f"key:{combo}", "executed", "+".join(keys))
 
-    with client.open_ws() as ws:
+    with _ws_for(client, ws) as sock:
         for k in keys:
-            ws.key(k, True)
+            sock.key(k, True)
             time.sleep(KEY_DELAY)
         for k in reversed(keys):
-            ws.key(k, False)
+            sock.key(k, False)
             time.sleep(KEY_DELAY)
         time.sleep(FLUSH_DELAY)
     return keys
@@ -233,36 +250,42 @@ def press_combo(client: PiKvmClient, combo: str, confirm_token: str | None = Non
 # -- compound actions ---------------------------------------------------------
 
 def run_sequence(client: PiKvmClient, actions: list[dict],
-                 confirm_token: str | None = None) -> list[str]:
+                 confirm_token: str | None = None,
+                 ws: HidWebSocket | None = None) -> list[str]:
     """Run a list of input steps in order, so an agent spends one round-trip on
     a trusted sub-sequence instead of one per step. Each action is a dict with
     an "action" key: move{x,y} | click{button?,x?,y?,double?} | drag{x1,y1,x2,y2}
     | wheel{dy} | type{text,submit?} | key{combo}. Guardrails apply per step; a
     blocked step raises GuardError and stops the sequence there.
+
+    All steps share one WebSocket (the borrowed `ws`, or one opened here), so a
+    batch of N clicks pays a single connection handshake instead of N — the main
+    latency win for multi-target UIs like image-grid captchas.
     """
     results: list[str] = []
-    for i, a in enumerate(actions):
-        kind = a.get("action")
-        if kind == "move":
-            mouse_move(client, a["x"], a["y"])
-            results.append(f"move ({a['x']},{a['y']})")
-        elif kind == "click":
-            click(client, a.get("button", "left"), a.get("x"), a.get("y"),
-                  double=a.get("double", False))
-            results.append(f"{a.get('button', 'left')} click")
-        elif kind == "drag":
-            drag(client, a["x1"], a["y1"], a["x2"], a["y2"])
-            results.append("drag")
-        elif kind == "wheel":
-            wheel(client, a["dy"])
-            results.append(f"wheel {a['dy']}")
-        elif kind == "type":
-            type_text(client, a["text"], confirm_token=confirm_token,
-                      submit=a.get("submit", False))
-            results.append(f"type {len(a['text'])} chars")
-        elif kind == "key":
-            press_combo(client, a["combo"], confirm_token=confirm_token)
-            results.append(f"key {a['combo']}")
-        else:
-            raise PiKvmError(f"action {i}: unknown action {kind!r}")
+    with _ws_for(client, ws) as sock:
+        for i, a in enumerate(actions):
+            kind = a.get("action")
+            if kind == "move":
+                mouse_move(client, a["x"], a["y"], ws=sock)
+                results.append(f"move ({a['x']},{a['y']})")
+            elif kind == "click":
+                click(client, a.get("button", "left"), a.get("x"), a.get("y"),
+                      double=a.get("double", False), ws=sock)
+                results.append(f"{a.get('button', 'left')} click")
+            elif kind == "drag":
+                drag(client, a["x1"], a["y1"], a["x2"], a["y2"], ws=sock)
+                results.append("drag")
+            elif kind == "wheel":
+                wheel(client, a["dy"], ws=sock)
+                results.append(f"wheel {a['dy']}")
+            elif kind == "type":
+                type_text(client, a["text"], confirm_token=confirm_token,
+                          submit=a.get("submit", False), ws=sock)
+                results.append(f"type {len(a['text'])} chars")
+            elif kind == "key":
+                press_combo(client, a["combo"], confirm_token=confirm_token, ws=sock)
+                results.append(f"key {a['combo']}")
+            else:
+                raise PiKvmError(f"action {i}: unknown action {kind!r}")
     return results

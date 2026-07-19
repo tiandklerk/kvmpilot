@@ -39,6 +39,27 @@ class PiKvmClient:
             timeout=timeout,
         )
         self._cookie_auth = False
+        self._session_ws: "HidWebSocket | None" = None
+
+    # -- persistent session -------------------------------------------------
+
+    def session_ws(self) -> "HidWebSocket":
+        """A long-lived HID WebSocket, reused across actions. Holding it open
+        also keeps kvmd's streamer awake, so snapshots skip the wake cost.
+        Reopened transparently if it was reset."""
+        if self._session_ws is None:
+            self._session_ws = self.open_ws()
+        return self._session_ws
+
+    def reset_session_ws(self) -> None:
+        """Drop the persistent socket (e.g. after a connection error); the next
+        session_ws() call reopens it."""
+        if self._session_ws is not None:
+            try:
+                self._session_ws.close()
+            except Exception:
+                pass
+            self._session_ws = None
 
     # -- auth ---------------------------------------------------------------
 
@@ -129,6 +150,7 @@ class PiKvmClient:
         return HidWebSocket(ws)
 
     def close(self) -> None:
+        self.reset_session_ws()
         self._http.close()
 
     def __enter__(self) -> "PiKvmClient":

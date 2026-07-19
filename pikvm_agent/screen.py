@@ -183,6 +183,40 @@ def wait_until_stable(
     return Snapshot(prev, full_w, full_h, "settled" if settled else "unsettled"), settled
 
 
+def fit_jpeg(jpeg: bytes, max_bytes: int = 45_000) -> bytes:
+    """Shrink a JPEG to fit a byte budget for transport to the agent.
+
+    Some MCP clients truncate an oversized image payload (seen: a ~25k-token cap
+    that silently corrupts the frame). We reduce *quality* first — this keeps the
+    native resolution, so text stays legible — and only downscale as a last
+    resort. Frames already under budget (e.g. native-resolution crops) are
+    returned untouched."""
+    if len(jpeg) <= max_bytes:
+        return jpeg
+    with Image.open(io.BytesIO(jpeg)) as img:
+        rgb = img.convert("RGB")
+    smallest = jpeg
+    for q in (80, 70, 60, 50, 40):
+        out = io.BytesIO()
+        rgb.save(out, format="JPEG", quality=q, optimize=True)
+        data = out.getvalue()
+        if len(data) < len(smallest):
+            smallest = data
+        if len(data) <= max_bytes:
+            return data
+    w, h = rgb.size
+    for scale in (0.7, 0.5, 0.35, 0.25, 0.18):  # quality alone wasn't enough
+        nw, nh = max(320, int(w * scale)), max(180, int(h * scale))
+        out = io.BytesIO()
+        rgb.resize((nw, nh), Image.LANCZOS).save(out, format="JPEG", quality=55, optimize=True)
+        data = out.getvalue()
+        if len(data) < len(smallest):
+            smallest = data
+        if len(data) <= max_bytes:
+            return data
+    return smallest  # best effort — still smaller than the original
+
+
 def capture_ocr(client: PiKvmClient) -> str:
     """Server-side OCR of the current frame (Tesseract on the PiKVM)."""
     body, content_type = client.get_bytes("/api/streamer/snapshot", ocr=1)

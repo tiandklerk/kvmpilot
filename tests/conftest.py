@@ -70,4 +70,8 @@ def mock_device(tmp_path, monkeypatch):
     monkeypatch.setattr(screen, "RESOLUTION_CACHE", tmp_path / "state" / "resolution.json")
     monkeypatch.setattr(screen, "WAKE_ATTEMPTS", 1)  # keep fallback tests fast
     yield device
+    # the MCP server holds one warm session; drop it so the next mock (new port)
+    # doesn't inherit a socket pointing at this torn-down device
+    import pikvm_agent.mcp_server as mcp_server
+    mcp_server._drop_session()
     device.stop()
