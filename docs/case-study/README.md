@@ -251,14 +251,56 @@ batched 4 clicks over one socket:  0.42s
 The first capture warms the streamer once (at server startup, before the agent
 ever looks); **every screenshot after is ~0.1 seconds — roughly a hundred times
 faster.** A "look, click four things, look again" cycle drops from well over a
-minute to a couple of seconds. The CAPTCHA timer stops being the adversary — and
-so does every other timed or multi-step interaction.
+minute to a couple of seconds.
 
 | Operation                     | Before   | After    | Speedup |
 |-------------------------------|----------|----------|---------|
 | Screenshot (warm)             | ~11.75 s | ~0.10 s  | ~100×   |
 | 4 clicks + verify             | 5 calls  | 1 call   | 5×      |
 | Frame payload                 | truncated| under cap| —       |
+
+### The bug the synthetic test hid
+
+That table nearly shipped a lie. The back-to-back measurement above looks
+perfect *because it has no gaps* — three captures fired in a row. The moment the
+harness was driven like a real agent, with a few seconds of think-time between
+calls, the warm session went **cold again: 11.4 seconds, every time.**
+
+The cause was subtle and only a realistic end-to-end test could surface it. kvmd
+sends application-level keepalive pings on the HID socket and **drops a client
+that stops answering** — and the harness only replied when it was actively
+sending an action. In the quiet seconds between an agent's clicks, the socket
+went unanswered, kvmd closed it, and the streamer re-suspended. The "warm
+session" was an illusion that evaporated between turns.
+
+The fix is a background thread that pongs kvmd every four seconds, under its
+tolerance. Verified the honest way — *with* idle gaps:
+
+```
+warm-up:            11.77s   (the one-time wake)
+after 25s idle:      0.19s
+after another 25s:   0.21s
+```
+
+**The lesson inside the lesson:** even a correct-looking fix has to be measured
+under realistic conditions. Synthetic timing said "solved"; the real loop said
+"not yet." The CAPTCHA timer only stops being the adversary once the session
+stays warm *across an agent's think-time* — which is the only kind of warmth
+that matters.
+
+### Proof, end to end
+
+With the fast path complete, Opus re-ran the CAPTCHA through the real MCP server.
+It drew **"Select all images with a bus,"** classified the grid from one
+native-resolution crop, batched the three bus tiles into a single call, and
+verified — warm captures landing at ~0.2 seconds each throughout.
+
+![The bus challenge with the three correct tiles selected — two coaches and a bus on a road](images/09-captcha-bus-selected.jpg)
+
+![Solved on the fast path: a green checkmark on "I'm not a robot"](images/10-captcha-solved-fastpath.jpg)
+
+Same model, same eyes, same vendor demo — **solved on the first challenge this
+time.** The only thing that changed was a loop that no longer fights the clock.
 
 ---
 
@@ -275,6 +317,10 @@ so does every other timed or multi-step interaction.
   "classify in one frame, batch the clicks." Writing that into the agent's skill
   means the next agent inherits it for free — the second one starts where the
   first one finished.
+- **Measure under realistic conditions or you'll ship an illusion.** The warm
+  session passed a synthetic back-to-back benchmark and still failed in
+  practice, because real agents pause to think between actions. The bug lived
+  precisely in the gap the benchmark skipped.
 
 ---
 
