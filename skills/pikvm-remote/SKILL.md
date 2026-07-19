@@ -46,9 +46,17 @@ set a default). The MCP server targets whichever profile it was started with.
 ## First, orient (check system state)
 
 Run `pikvm status` — reports device reachability, ATX power LED, and whether
-the keyboard/mouse HID are online. If `mouse: OFFLINE`, moves/clicks won't
+the keyboard/mouse HID are online, plus the mouse mode and active output
+(e.g. `online (absolute, output usb)`). If `mouse: OFFLINE`, moves/clicks won't
 land until the host enumerates the USB mouse (re-plug OTG / reboot host);
 tell the user rather than clicking into the void.
+
+Mouse mode is handled for you: pixel actions require kvmd's **absolute**
+pointer mode, and every mouse action checks and auto-switches a relative
+output first (the first action after a switch takes a few extra seconds while
+the USB gadget re-enumerates). If you get a "no absolute output" error, the
+device genuinely can't do absolute positioning — stop and tell the user;
+don't try to work around it with relative motion.
 
 Then `pikvm screenshot` and identify the OS from what's on screen:
 - **Windows** — taskbar at the bottom, Start button bottom-left.
@@ -73,6 +81,17 @@ Then `pikvm screenshot` and identify the OS from what's on screen:
 - Coordinates: `pikvm click 640 400`, `pikvm move 100 200`,
   `pikvm drag 100 100 400 400`, `pikvm wheel -3`.
 
+**Verify before you submit.** Typed strings can occasionally drop a character
+in transit. For anything consequential — a command, a URL, a password field —
+type first, re-read it on screen (a `--crop` of the input line is perfect for
+this), and only then press Enter. Reserve `type "..." --enter` /
+`type_text(submit=True)` for low-stakes input where a typo is harmless.
+
+**Verify before a risky click.** When the click target sits next to a control
+you must not hit (Cancel beside OK, "Remind Me Later" beside "Install Now"),
+`move` onto the target first, crop-verify the cursor is on the right control,
+then `click` at the same coordinates.
+
 ## Guardrails — you cannot bypass them, and shouldn't try
 
 Dangerous actions are **blocked** and exit with code 3 and a token:
@@ -91,7 +110,8 @@ to an audit log regardless.
 ## MCP equivalent
 
 The same capabilities are exposed as MCP tools (`pikvm mcp`): `screenshot`
-returns the image inline, plus `system_status`, `mouse_move`, `mouse_click`,
-`mouse_drag`, `wheel`, `type_text`, `press_keys`, `atx_action`,
-`confirm_action`, `screen_ocr`. Guardrails behave identically — a blocked
+(with `crop` and `settle`) returns the image inline, plus `wait_for_stable`,
+`screen_ocr`, `system_status`, `mouse_move`, `mouse_click`, `mouse_drag`,
+`wheel`, `type_text` (with `submit`), `run_actions`, `press_keys`,
+`atx_action`, `confirm_action`. Guardrails behave identically — a blocked
 tool returns a token to relay to the human.
