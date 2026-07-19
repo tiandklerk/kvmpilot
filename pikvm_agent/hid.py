@@ -58,15 +58,21 @@ def get_resolution(client: PiKvmClient) -> tuple[int, int]:
 MOUSE_SWITCH_TIMEOUT = 8.0  # seconds for the gadget to re-enumerate after a switch
 
 
-def ensure_absolute_mouse(client: PiKvmClient) -> str:
-    """Pixel-coordinate actions require kvmd's absolute pointer mode. Check the
-    current mode and, if the device is in a relative output (e.g. "usb_rel"),
-    switch it to an absolute one and wait for the gadget to come back online.
-    Returns "absolute" (already fine) or "switched:<output>". Raises if the
-    device offers no absolute output at all.
+def ensure_absolute_mouse(client: PiKvmClient, auto_switch: bool = False) -> str:
+    """Verify the device is in kvmd's absolute pointer mode, which pixel-
+    coordinate actions require — WITHOUT changing anything by default.
 
-    The positive result is cached on the client, so within one process (a CLI
-    invocation, or a long-lived MCP server) the check costs one request total.
+    Switching the mouse output re-enumerates the USB mouse gadget, and on some
+    hosts a re-enumeration is not cleanly re-grabbed: the mouse drops offline
+    (seen live — repeated switching left an Ubuntu host unable to enumerate the
+    gadget, while the never-switched keyboard stayed online). So normal mouse
+    actions NEVER switch; if the device is in a relative output they raise with
+    guidance. Pass auto_switch=True only from an explicit user action (the CLI
+    `mouse-mode` command) to actually perform the switch.
+
+    Returns "absolute" (already fine), or "switched:<output>" when auto_switch
+    performed a change. The positive result is cached per client, so within one
+    process the check costs a single request.
     """
     if getattr(client, "_mouse_absolute_ok", False):
         return "absolute"
@@ -76,23 +82,33 @@ def ensure_absolute_mouse(client: PiKvmClient) -> str:
         return "absolute"
 
     outputs = mouse.get("outputs", {})
+    active = outputs.get("active")
     available = outputs.get("available") or []
     # kvmd's relative outputs carry a _rel suffix (usb_rel); anything else is absolute
     candidates = [o for o in available if o and not o.endswith("_rel") and o != "disabled"]
     if not candidates:
         raise PiKvmError(
-            f"mouse is in relative mode (output {outputs.get('active')!r}) and this device "
-            f"offers no absolute output (available: {available}); pixel-coordinate mouse "
-            "actions cannot work — switch the mouse mode in the PiKVM web UI"
+            f"mouse is in relative mode (output {active!r}) and this device offers no "
+            f"absolute output (available: {available}); pixel-coordinate mouse actions "
+            "cannot work — set an absolute mouse output in the PiKVM web UI"
         )
     target = "usb" if "usb" in candidates else candidates[0]
+
+    if not auto_switch:
+        raise PiKvmError(
+            f"mouse is in relative mode (output {active!r}); pixel-coordinate actions need "
+            "absolute positioning. Switch it explicitly with `pikvm mouse-mode` (or in the "
+            "PiKVM web UI) — the harness will not switch on its own because re-enumerating "
+            "the USB mouse gadget can drop it offline on some hosts."
+        )
+
     client.set_mouse_output(target)
     deadline = time.time() + MOUSE_SWITCH_TIMEOUT
     while time.time() < deadline:
         m = client.hid_state().get("mouse", {})
         if m.get("absolute") and m.get("online"):
             client._mouse_absolute_ok = True
-            guard.audit("mouse_output", "executed", f"auto-switched to {target} (absolute)")
+            guard.audit("mouse_output", "executed", f"switched to {target} (absolute)")
             return f"switched:{target}"
         time.sleep(0.3)
     raise PiKvmError(

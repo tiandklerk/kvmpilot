@@ -60,8 +60,8 @@ def cmd_status(client: PiKvmClient, args: argparse.Namespace) -> int:
               "mouse moves/clicks will not reach it until it comes online "
               "(re-plug the OTG, reboot the host, or try the usb_rel output).")
     elif not mouse.get("absolute"):
-        print("  note:       mouse is in relative mode; the first mouse action "
-              "will auto-switch it to an absolute output.")
+        print("  note:       mouse is in relative mode; pixel-coordinate actions need "
+              "absolute mode. Run `pikvm mouse-mode` to switch (re-enumerates the gadget).")
     if args.json:
         print(json.dumps({"info": info, "atx": atx, "hid": hid, "snapshot": snapshot}, indent=2))
     return EXIT_OK
@@ -130,6 +130,26 @@ def cmd_drag(client: PiKvmClient, args: argparse.Namespace) -> int:
     client.ensure_auth()
     hid.drag(client, args.x1, args.y1, args.x2, args.y2)
     print(f"dragged ({args.x1}, {args.y1}) -> ({args.x2}, {args.y2})")
+    return EXIT_OK
+
+
+def cmd_mouse_mode(client: PiKvmClient, args: argparse.Namespace) -> int:
+    from . import hid
+
+    client.ensure_auth()
+    mouse = client.hid_state().get("mouse", {})
+    active = mouse.get("outputs", {}).get("active")
+    if mouse.get("absolute"):
+        print(f"mouse already in absolute mode (output {active}); nothing to switch")
+        return EXIT_OK
+    print(f"mouse is in relative mode (output {active}); switching to absolute "
+          "(this re-enumerates the USB gadget — it may blink offline briefly)...")
+    result = hid.ensure_absolute_mouse(client, auto_switch=True)
+    online = client.hid_state().get("mouse", {}).get("online")
+    print(f"{result}; mouse online={online}")
+    if not online:
+        print("  note: the host hasn't re-grabbed the gadget yet — if it stays offline, "
+              "re-plug the OTG cable at the host.")
     return EXIT_OK
 
 
@@ -419,6 +439,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("x2", type=float)
     p.add_argument("y2", type=float)
     p.set_defaults(func=cmd_drag)
+
+    p = sub.add_parser("mouse-mode",
+                       help="explicitly switch the mouse to absolute mode (re-enumerates the gadget)")
+    p.set_defaults(func=cmd_mouse_mode)
 
     p = sub.add_parser("wheel", help="scroll: positive dy scrolls up, negative down")
     p.add_argument("dy", type=int)

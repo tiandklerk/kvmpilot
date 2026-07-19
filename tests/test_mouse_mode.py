@@ -20,24 +20,36 @@ def test_absolute_mode_is_a_noop(mock_device):
     assert [e for e in mock_device.events() if e["kind"] == "set_params"] == []
 
 
-def test_relative_mode_auto_switches(mock_device):
+def test_relative_mode_raises_without_switching(mock_device):
+    # default must NOT re-enumerate the gadget — it raises with guidance instead
     mock_device.kvmd.mouse_absolute = False
     mock_device.kvmd.mouse_output_active = "usb_rel"
     with _client() as client:
-        assert hid.ensure_absolute_mouse(client) == "switched:usb"
+        with pytest.raises(PiKvmError, match="will not switch on its own"):
+            hid.ensure_absolute_mouse(client)
+    assert [e for e in mock_device.events() if e["kind"] == "set_params"] == []
+    assert mock_device.kvmd.mouse_absolute is False  # untouched
+
+
+def test_relative_mode_switches_only_on_explicit_optin(mock_device):
+    mock_device.kvmd.mouse_absolute = False
+    mock_device.kvmd.mouse_output_active = "usb_rel"
+    with _client() as client:
+        assert hid.ensure_absolute_mouse(client, auto_switch=True) == "switched:usb"
     switches = [e for e in mock_device.events() if e["kind"] == "set_params"]
     assert switches and switches[0]["mouse_output"] == "usb"
     assert mock_device.kvmd.mouse_absolute is True
 
 
-def test_mouse_move_switches_then_moves(mock_device):
+def test_mouse_move_refuses_in_relative_mode(mock_device):
+    # a normal mouse action must not silently switch — it refuses cleanly
     mock_device.kvmd.mouse_absolute = False
     mock_device.kvmd.mouse_output_active = "usb_rel"
     with _client() as client:
-        hid.mouse_move(client, 100, 100)
+        with pytest.raises(PiKvmError, match="will not switch on its own"):
+            hid.mouse_move(client, 100, 100)
     kinds = [e["kind"] for e in mock_device.events()]
-    assert "set_params" in kinds and "mouse_move" in kinds
-    assert kinds.index("set_params") < kinds.index("mouse_move")
+    assert "set_params" not in kinds and "mouse_move" not in kinds
 
 
 def test_result_cached_per_client(mock_device):

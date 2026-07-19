@@ -73,12 +73,13 @@ the keyboard/mouse HID are online, plus the mouse mode and active output
 land until the host enumerates the USB mouse (re-plug OTG / reboot host);
 tell the user rather than clicking into the void.
 
-Mouse mode is handled for you: pixel actions require kvmd's **absolute**
-pointer mode, and every mouse action checks and auto-switches a relative
-output first (the first action after a switch takes a few extra seconds while
-the USB gadget re-enumerates). If you get a "no absolute output" error, the
-device genuinely can't do absolute positioning — stop and tell the user;
-don't try to work around it with relative motion.
+Mouse mode: pixel actions require kvmd's **absolute** pointer mode. Mouse
+actions verify this but **do not switch it for you** — switching re-enumerates
+the USB mouse gadget and can drop it offline on some hosts. If you get a
+"relative mode" error, tell the user to run `pikvm mouse-mode` once (or set an
+absolute output in the PiKVM web UI); don't try to work around it with relative
+motion. A "no absolute output" error means the device genuinely can't do
+absolute positioning — stop and report.
 
 Then `pikvm screenshot` and identify the OS from what's on screen:
 - **Windows** — taskbar at the bottom, Start button bottom-left.
