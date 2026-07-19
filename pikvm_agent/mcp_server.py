@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import threading
+import time
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -32,15 +33,38 @@ mcp = FastMCP("pikvm")
 # between beating and missing a captcha's ~60s timer.
 _session: PiKvmClient | None = None
 _session_lock = threading.Lock()
+_keepalive_started = False
+
+# kvmd sends application-level {"event_type":"ping"} on the HID socket and drops
+# a client that stops answering; a dropped socket lets the streamer re-suspend,
+# so every subsequent screenshot pays the multi-second wake again. Pong on a
+# timer (shorter than kvmd's ~10s tolerance) so the socket — and the warm
+# streamer — survive the idle gaps between agent actions.
+_KEEPALIVE_INTERVAL = 4.0
+
+
+def _keepalive_loop() -> None:
+    while True:
+        time.sleep(_KEEPALIVE_INTERVAL)
+        with _session_lock:
+            if _session is None:
+                continue
+            try:
+                _session.session_ws().keepalive()
+            except Exception:
+                _session.reset_session_ws()  # reopened on next use
 
 
 def _open_session() -> PiKvmClient:
-    global _session
+    global _session, _keepalive_started
     if _session is None:
         client = PiKvmClient(load_config())
         client.ensure_auth()
         client.session_ws()  # open the persistent socket; warms the streamer
         _session = client
+    if not _keepalive_started:
+        threading.Thread(target=_keepalive_loop, daemon=True).start()
+        _keepalive_started = True
     return _session
 
 

@@ -195,6 +195,14 @@ class HidWebSocket:
             except (ValueError, AttributeError):
                 pass
 
+    def keepalive(self) -> None:
+        """Keep the socket (and thus kvmd's streamer) alive during idle: answer
+        any buffered server ping, and send an unsolicited pong so kvmd sees the
+        client as live even between our actions. Raises if the socket is dead,
+        so the caller can reopen it."""
+        self._drain()
+        self._ws.send('{"event_type":"pong"}')
+
     def close(self) -> None:
         self._ws.close()
 
