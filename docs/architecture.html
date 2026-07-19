@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claudekvm — Architecture</title>
+<title>kvmpilot — Architecture</title>
 <script>
 (function(ZM,Dg){typeof exports=="object"&&typeof module<"u"?module.exports=Dg():typeof define=="function"&&define.amd?define(Dg):(ZM=typeof globalThis<"u"?globalThis:ZM||self,ZM.mermaid=Dg())})(this,function(){var dYe,gYe;"use strict";function ZM(i){for(var a=[],u=1;u<arguments.length;u++)a[u-1]=arguments[u];var d=Array.from(typeof i=="string"?[i]:i);d[d.length-1]=d[d.length-1].replace(/\r?\n([\t ]*)$/,"");var p=d.reduce(function(y,E){var _=E.match(/\n([\t ]+|(?!\s).)/g);return _?y.concat(_.map(function(A){var P,R;return(R=(P=A.match(/[\t ]/g))===null||P===void 0?void 0:P.length)!==null&&R!==void 0?R:0})):y},[]);if(p.length){var v=new RegExp(`
 [	 ]{`+Math.min.apply(Math,p)+"}","g");d=d.map(function(y){return y.replace(v,`
@@ -2100,7 +2100,7 @@ Expecting `+Ze.join(", ")+", got '"+(this.terminals_[Ne]||Ne)+"'":Dt="Parse erro
 <div class="wrap">
 
 <header class="hero">
-  <h1>claudekvm</h1>
+  <h1>kvmpilot</h1>
   <p>An LLM-agent harness that operates a physical computer through a PiKVM — screen capture in, keyboard/mouse out — with dangerous-action guardrails. Exposed as a CLI and an MCP server.</p>
   <div class="pills">
     <span class="pill">Python 3.10+</span>
@@ -2131,7 +2131,7 @@ Expecting `+Ze.join(", ")+", got '"+(this.terminals_[Ne]||Ne)+"'":Dt="Parse erro
 <p>
   A PiKVM is an IP-KVM: it plugs into a target computer's HDMI and USB ports and exposes the
   screen as video and the keyboard/mouse as a USB HID gadget over a network API (<em>kvmd</em>).
-  <strong>claudekvm</strong> wraps that API so an LLM agent can <em>see</em> the target (JPEG
+  <strong>kvmpilot</strong> wraps that API so an LLM agent can <em>see</em> the target (JPEG
   snapshots) and <em>act</em> on it (mouse/keyboard), with no software installed on the target.
   Because the agent reasons over pixels and emits USB input, the target OS is irrelevant —
   Windows, macOS and Linux are all driven the same way.
@@ -2141,7 +2141,7 @@ Expecting `+Ze.join(", ")+", got '"+(this.terminals_[Ne]||Ne)+"'":Dt="Parse erro
 <pre class="mermaid">
 flowchart LR
   agent["LLM agent<br/>(Claude / Hermes / OpenClaw)"]
-  subgraph harness["claudekvm harness"]
+  subgraph harness["kvmpilot harness"]
     cli["pikvm CLI"]
     mcp["MCP server<br/>(stdio)"]
     core["core: client · screen · hid · guard · atx"]
@@ -2532,7 +2532,7 @@ screenshots as evidence for each step.</code></pre>
 </ul>
 
 <footer>
-  claudekvm architecture · generated for the repository docs · diagrams rendered with Mermaid.
+  kvmpilot architecture · generated for the repository docs · diagrams rendered with Mermaid.
   See <code>README.md</code> for setup and <code>skills/pikvm-remote/SKILL.md</code> for the agent playbook.
 </footer>
 

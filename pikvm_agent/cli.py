@@ -40,7 +40,10 @@ def cmd_status(client: PiKvmClient, args: argparse.Namespace) -> int:
     kbd_online = hid.get("keyboard", {}).get("online")
     mouse = hid.get("mouse", {})
     mouse_online = mouse.get("online")
+    mouse_out = mouse.get("outputs", {}).get("active")
     mouse_mode = "absolute" if mouse.get("absolute") else "relative"
+    if mouse_out:
+        mouse_mode += f", output {mouse_out}"
 
     platform = info.get("hw", {}).get("platform", {})
     meta_host = info.get("meta", {}).get("server", {}).get("host", "?")
@@ -56,6 +59,9 @@ def cmd_status(client: PiKvmClient, args: argparse.Namespace) -> int:
         print("  warning:    the host has not enumerated the USB mouse gadget; "
               "mouse moves/clicks will not reach it until it comes online "
               "(re-plug the OTG, reboot the host, or try the usb_rel output).")
+    elif not mouse.get("absolute"):
+        print("  note:       mouse is in relative mode; the first mouse action "
+              "will auto-switch it to an absolute output.")
     if args.json:
         print(json.dumps({"info": info, "atx": atx, "hid": hid, "snapshot": snapshot}, indent=2))
     return EXIT_OK

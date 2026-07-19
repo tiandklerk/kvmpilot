@@ -5,11 +5,11 @@
 ## Goal
 
 Let a user push a registered PiKVM profile from pikonnect directly to the
-claudekvm **enrollment gateway** running on their always-on server, over the
+kvmpilot **enrollment gateway** running on their always-on server, over the
 local network — no file export/import, all in the UI. This mirrors how the app
 already sends an SSH connection to that server.
 
-The gateway (server side) is **already built** in claudekvm. This requirement
+The gateway (server side) is **already built** in kvmpilot. This requirement
 covers only the app side: a settings screen to pair with a gateway, and an
 "Export to Gateway" action on KVM profiles.
 

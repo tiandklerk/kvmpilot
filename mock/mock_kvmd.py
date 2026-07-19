@@ -50,6 +50,9 @@ class MockKvmd:
         self.snapshot_enabled = True  # False simulates Janus-only mode (snapshot 404s)
         self.mouse_online = True
         self.keyboard_online = True
+        self.mouse_absolute = True
+        self.mouse_output_active = "usb"
+        self.mouse_outputs_available = ["usb", "usb_rel"]
         self.snapshot_churn = 0  # >0: return N changing frames (for settle tests)
         frame = frame_file or DEFAULT_FRAME
         self.frame_bytes = frame.read_bytes() if frame.exists() else _make_fallback_frame()
@@ -123,10 +126,25 @@ class MockKvmd:
             "result": {
                 "enabled": True, "busy": False,
                 "keyboard": {"online": self.keyboard_online, "leds": {}},
-                "mouse": {"online": self.mouse_online, "absolute": True,
-                          "outputs": {"active": "usb", "available": ["usb", "usb_rel"]}},
+                "mouse": {"online": self.mouse_online, "absolute": self.mouse_absolute,
+                          "outputs": {"active": self.mouse_output_active,
+                                      "available": self.mouse_outputs_available}},
             },
         })
+
+    async def set_params(self, request: web.Request) -> web.Response:
+        if err := self._require_auth(request):
+            return err
+        out = request.query.get("mouse_output")
+        if out:
+            if out not in self.mouse_outputs_available:
+                return web.json_response(
+                    {"ok": False, "result": {"error": f"unknown mouse output {out!r}"}},
+                    status=400)
+            self.mouse_output_active = out
+            self.mouse_absolute = not out.endswith("_rel")
+            self.record("http", "set_params", {"mouse_output": out})
+        return web.json_response({"ok": True, "result": {}})
 
     async def atx(self, request: web.Request) -> web.Response:
         if err := self._require_auth(request):
@@ -227,6 +245,7 @@ class MockKvmd:
         app.router.add_get("/api/atx", self.atx)
         app.router.add_post("/api/atx/click", self.atx_click)
         app.router.add_post("/api/hid/print", self.hid_print)
+        app.router.add_post("/api/hid/set_params", self.set_params)
         app.router.add_post("/api/hid/events/send_key", self.send_key)
         app.router.add_get("/api/streamer/snapshot", self.snapshot)
         app.router.add_get("/stream", self.stream)

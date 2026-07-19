@@ -42,7 +42,54 @@ def get_resolution(client: PiKvmClient) -> tuple[int, int]:
 
 # -- mouse --------------------------------------------------------------------
 
+MOUSE_SWITCH_TIMEOUT = 8.0  # seconds for the gadget to re-enumerate after a switch
+
+
+def ensure_absolute_mouse(client: PiKvmClient) -> str:
+    """Pixel-coordinate actions require kvmd's absolute pointer mode. Check the
+    current mode and, if the device is in a relative output (e.g. "usb_rel"),
+    switch it to an absolute one and wait for the gadget to come back online.
+    Returns "absolute" (already fine) or "switched:<output>". Raises if the
+    device offers no absolute output at all.
+
+    The positive result is cached on the client, so within one process (a CLI
+    invocation, or a long-lived MCP server) the check costs one request total.
+    """
+    if getattr(client, "_mouse_absolute_ok", False):
+        return "absolute"
+    mouse = client.hid_state().get("mouse", {})
+    if mouse.get("absolute"):
+        client._mouse_absolute_ok = True
+        return "absolute"
+
+    outputs = mouse.get("outputs", {})
+    available = outputs.get("available") or []
+    # kvmd's relative outputs carry a _rel suffix (usb_rel); anything else is absolute
+    candidates = [o for o in available if o and not o.endswith("_rel") and o != "disabled"]
+    if not candidates:
+        raise PiKvmError(
+            f"mouse is in relative mode (output {outputs.get('active')!r}) and this device "
+            f"offers no absolute output (available: {available}); pixel-coordinate mouse "
+            "actions cannot work — switch the mouse mode in the PiKVM web UI"
+        )
+    target = "usb" if "usb" in candidates else candidates[0]
+    client.set_mouse_output(target)
+    deadline = time.time() + MOUSE_SWITCH_TIMEOUT
+    while time.time() < deadline:
+        m = client.hid_state().get("mouse", {})
+        if m.get("absolute") and m.get("online"):
+            client._mouse_absolute_ok = True
+            guard.audit("mouse_output", "executed", f"auto-switched to {target} (absolute)")
+            return f"switched:{target}"
+        time.sleep(0.3)
+    raise PiKvmError(
+        f"switched mouse output to {target!r} but it did not come back online in "
+        f"absolute mode within {MOUSE_SWITCH_TIMEOUT:.0f}s"
+    )
+
+
 def mouse_move(client: PiKvmClient, x: float, y: float) -> None:
+    ensure_absolute_mouse(client)
     w, h = get_resolution(client)
     kx, ky = pixel_to_kvm(x, y, w, h)
     with client.open_ws() as ws:
@@ -59,6 +106,7 @@ def click(
 ) -> None:
     if button not in ("left", "right", "middle"):
         raise PiKvmError(f"unknown mouse button {button!r}")
+    ensure_absolute_mouse(client)
     w, h = get_resolution(client)
     with client.open_ws() as ws:
         if x is not None and y is not None:
@@ -73,6 +121,7 @@ def click(
 
 
 def drag(client: PiKvmClient, x1: float, y1: float, x2: float, y2: float, steps: int = 12) -> None:
+    ensure_absolute_mouse(client)
     w, h = get_resolution(client)
     with client.open_ws() as ws:
         ws.mouse_move(*pixel_to_kvm(x1, y1, w, h))
@@ -88,6 +137,7 @@ def drag(client: PiKvmClient, x1: float, y1: float, x2: float, y2: float, steps:
 
 
 def wheel(client: PiKvmClient, dy: int, dx: int = 0) -> None:
+    ensure_absolute_mouse(client)
     with client.open_ws() as ws:
         ws.mouse_wheel(dx, dy)
         time.sleep(FLUSH_DELAY)

@@ -1,4 +1,4 @@
-# claudekvm — a PiKVM harness for LLM agents
+# kvmpilot — a PiKVM harness for LLM agents
 
 Let an LLM agent (Claude Code, Hermes, OpenClaw, or any MCP-capable agent)
 operate a physical computer through a [PiKVM](https://pikvm.org): **capture the

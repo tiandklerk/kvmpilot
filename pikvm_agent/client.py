@@ -80,6 +80,16 @@ class PiKvmClient:
         if r.status_code != 200:
             raise PiKvmError(f"atx click {button} -> HTTP {r.status_code} {r.text[:200]}")
 
+    def hid_state(self) -> dict:
+        return self._get_json("/api/hid").get("result", {})
+
+    def set_mouse_output(self, output: str) -> None:
+        """Switch the kvmd mouse gadget (e.g. "usb" = absolute, "usb_rel" =
+        relative). The gadget re-enumerates, so it may be briefly offline."""
+        r = self._http.post("/api/hid/set_params", params={"mouse_output": output})
+        if r.status_code != 200:
+            raise PiKvmError(f"set mouse output {output} -> HTTP {r.status_code} {r.text[:200]}")
+
     def hid_print(self, text: str) -> None:
         r = self._http.post(
             "/api/hid/print",
