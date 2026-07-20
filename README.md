@@ -133,13 +133,19 @@ Remote (drive from a cloud/off-LAN agent): run it as an HTTP service on an
 always-on box that shares the PiKVM's LAN, and reach it over a private mesh:
 
 ```bash
-pikvm mcp --http --bind 0.0.0.0 --port 8000     # serves at http://<host>:8000/mcp
+export PIKVM_MCP_TOKEN=$(openssl rand -hex 24)   # or: pikvm mcp --http ... --token <value>
+pikvm mcp --http --bind 0.0.0.0 --port 8000      # serves at http://<host>:8000/mcp
 ```
 
-**Never expose this on the public internet** — it can power-cycle and type into
-the target. Put it behind Tailscale/WireGuard with the confirm-token guardrails
-as the backstop. On a headless host, keyring won't have a daemon, so supply
-credentials via `PIKVM_*` env vars or the TOML file there.
+The HTTP transport has **no authentication of its own** — anyone who can reach
+the port can drive the KVM. Set `PIKVM_MCP_TOKEN` (or pass `--token`) so every
+request must present `Authorization: Bearer <token>`; without it, the server
+prints a warning on startup and, if bound beyond `127.0.0.1`, a second louder
+one. **Never expose this on the public internet** even with a token — it can
+power-cycle and type into the target. Put it behind Tailscale/WireGuard, with
+the token and the confirm-token guardrails as defense in depth. On a headless
+host, keyring won't have a daemon, so supply credentials via `PIKVM_*` env vars
+or the TOML file there.
 
 ### Enrollment gateway (register PiKVMs from a companion app)
 

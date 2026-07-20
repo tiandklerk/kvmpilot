@@ -12,6 +12,9 @@ Run:  pikvm mcp   (or:  python -m pikvm_agent.mcp_server)
 from __future__ import annotations
 
 import base64
+import hmac
+import os
+import sys
 import threading
 import time
 
@@ -376,16 +379,71 @@ def confirm_action(token: str) -> str:
     return err or f"confirmed and executed: {pending['reason']}"
 
 
-def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) -> None:
+class BearerAuthMiddleware:
+    """Minimal ASGI middleware: reject any HTTP request that doesn't present
+    `Authorization: Bearer <token>` matching the configured secret.
+
+    The streamable-HTTP transport has no auth of its own — anyone who can open
+    a TCP connection to the port can drive the KVM (screen, keyboard, mouse,
+    ATX power) with no credential beyond network reach. This closes that gap
+    when a token is configured; see main()/PIKVM_MCP_TOKEN."""
+
+    def __init__(self, app, token: str):
+        self.app = app
+        self._token = token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        headers = dict(scope.get("headers") or [])
+        got = headers.get(b"authorization", b"").decode("latin-1")
+        prefix = "Bearer "
+        ok = got.startswith(prefix) and hmac.compare_digest(got[len(prefix):], self._token)
+        if not ok:
+            body = b"unauthorized: missing or invalid Authorization: Bearer <token>"
+            await send({"type": "http.response.start", "status": 401,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
+
+
+def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000,
+         token: str | None = None) -> None:
     """Run the MCP server. transport="stdio" (default) for a local client that
     spawns this process; "streamable-http" to host it as a network service on
-    host:port (e.g. on a LAN box behind Tailscale — never expose it publicly)."""
-    if transport == "streamable-http":
-        mcp.settings.host = host
-        mcp.settings.port = port
-        mcp.run(transport="streamable-http")
-    else:
+    host:port (e.g. on a LAN box behind Tailscale — never expose it publicly).
+
+    token: bearer token required of every HTTP request (falls back to the
+    PIKVM_MCP_TOKEN env var). Strongly recommended whenever binding beyond
+    127.0.0.1 — the transport itself has no other access control."""
+    if transport != "streamable-http":
         mcp.run()
+        return
+
+    mcp.settings.host = host
+    mcp.settings.port = port
+    resolved = token or os.environ.get("PIKVM_MCP_TOKEN")
+    app = mcp.streamable_http_app()
+    if resolved:
+        app = BearerAuthMiddleware(app, resolved)
+        print(f"pikvm mcp: HTTP transport on {host}:{port} — bearer auth ENABLED", file=sys.stderr)
+    else:
+        print(f"pikvm mcp: HTTP transport on {host}:{port} — bearer auth DISABLED", file=sys.stderr)
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            print("  WARNING: bound beyond localhost with no token — anyone who can reach "
+                  f"{host}:{port} can drive this KVM. Set PIKVM_MCP_TOKEN or pass --token.",
+                  file=sys.stderr)
+
+    import asyncio
+    import uvicorn
+
+    async def _serve() -> None:
+        config = uvicorn.Config(app, host=host, port=port,
+                                log_level=mcp.settings.log_level.lower())
+        await uvicorn.Server(config).serve()
+
+    asyncio.run(_serve())
 
 
 if __name__ == "__main__":

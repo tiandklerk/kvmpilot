@@ -478,6 +478,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bind", default="127.0.0.1",
                    help="HTTP bind address (default 127.0.0.1; use 0.0.0.0 to expose on the LAN)")
     p.add_argument("--port", type=int, default=8000, help="HTTP port (default 8000)")
+    p.add_argument("--token", default=None,
+                   help="bearer token required of HTTP callers (else PIKVM_MCP_TOKEN env var; "
+                        "strongly recommended when --bind is not 127.0.0.1)")
     p.set_defaults(func=None)  # handled specially in main() before opening a client
 
     p = sub.add_parser("login", help="store a kvmd password in the OS keyring (recommended)")
@@ -540,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
         from .mcp_server import main as mcp_main
 
         if args.http:
-            mcp_main(transport="streamable-http", host=args.bind, port=args.port)
+            mcp_main(transport="streamable-http", host=args.bind, port=args.port, token=args.token)
         else:
             mcp_main()
         return EXIT_OK
