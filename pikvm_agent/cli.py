@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import config as config_mod
 from . import guard
+from .click_guard import OcrUnavailable as ClickOcrUnavailable
 from .client import PiKvmClient, PiKvmError
 from .config import ConfigError, load_config
 
@@ -118,7 +119,8 @@ def cmd_click(client: PiKvmClient, args: argparse.Namespace) -> int:
     from . import hid
 
     client.ensure_auth()
-    hid.click(client, args.button, args.x, args.y, double=args.double)
+    hid.click(client, args.button, args.x, args.y, double=args.double,
+              check_label=args.check_label, confirm_token=args.confirm)
     where = f" at ({args.x}, {args.y})" if args.x is not None else ""
     print(f"{'double-' if args.double else ''}{args.button} click{where}")
     return EXIT_OK
@@ -431,6 +433,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("x", nargs="?", type=float, default=None)
     p.add_argument("y", nargs="?", type=float, default=None)
     p.add_argument("--double", action="store_true")
+    p.add_argument("--check-label", action="store_true",
+                   help="OCR a small region around (x,y) first and require confirmation if it "
+                        "reads as a destructive control (Install Now, Format, ...); needs the "
+                        "'ocr' extra + tesseract-ocr installed")
+    p.add_argument("--confirm", metavar="TOKEN", default=None,
+                   help="token to authorize a click blocked by --check-label")
     p.set_defaults(func=cmd_click)
 
     p = sub.add_parser("drag", help="left-drag between two pixel coordinates")
@@ -569,6 +577,9 @@ def main(argv: list[str] | None = None) -> int:
                   f"    pikvm{' --mock' if args.mock else ''} confirm {e.token}\n"
                   f"(token valid for {guard.TOKEN_TTL // 60} minutes)", file=sys.stderr)
         return EXIT_BLOCKED
+    except ClickOcrUnavailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_ERROR
     except PiKvmError as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_ERROR

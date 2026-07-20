@@ -64,6 +64,33 @@ DANGEROUS_COMBOS = [
     frozenset({"ControlRight", "AltRight", "Delete"}),
 ]
 
+# GUI control labels that indicate a destructive/irreversible action, matched
+# case-insensitively against text OCR'd from a small crop around a click point
+# (see click_guard.py; opt-in via hid.click(check_label=True) — mouse actions
+# carry no text of their own, so this is the only way to gate a click at all).
+# Deliberately multi-word / specific: single common words ("delete", "remove",
+# "reset") appear constantly in ordinary UI ("Remove from cart") and would
+# train an agent to click through warnings without reading them.
+DANGEROUS_CLICK_LABELS: list[tuple[str, str]] = [
+    (r"\binstall\s+now\b", "'Install Now' control"),
+    (r"\brestart\s+now\b", "'Restart Now' control"),
+    (r"\brestart\s*&\s*update\b|\brestart\s+and\s+update\b", "'Restart & Update' control"),
+    (r"\breboot\s+now\b", "'Reboot Now' control"),
+    (r"\bshut\s*down\s+now\b", "'Shut Down Now' control"),
+    (r"\bpower\s+off\s+now\b", "'Power Off Now' control"),
+    (r"\bfactory\s+reset\b", "factory reset control"),
+    (r"\breset\s+this\s+(pc|device|computer)\b", "device reset control"),
+    (r"\bformat\s+(disk|drive|volume)\b", "format disk control"),
+    (r"\bwipe\s+(device|disk|drive|data)\b", "wipe device control"),
+    (r"\berase\s+all\s+content\b", "erase-all-content control"),
+    (r"\bdelete\s+(permanently|account|forever)\b", "permanent delete control"),
+    (r"\bempty\s+trash\b", "empty trash control"),
+    (r"\byes,?\s*delete\b", "delete confirmation control"),
+    (r"\bconfirm\s+deletion\b", "delete confirmation control"),
+    (r"\buninstall\b", "uninstall control"),
+    (r"\bremove\s+everything\b", "remove-everything control"),
+]
+
 
 class GuardError(Exception):
     """Raised when an action is blocked pending confirmation. `token` is None
@@ -121,6 +148,15 @@ def scan_combo(keys: list[str]) -> Danger | None:
     for combo in DANGEROUS_COMBOS:
         if combo <= key_set:
             return Danger("Ctrl+Alt+Del power chord")
+    return None
+
+
+def scan_click_label(text: str) -> Danger | None:
+    """Does OCR'd text near a click point read as a destructive GUI control?
+    See DANGEROUS_CLICK_LABELS for the (deliberately narrow) pattern table."""
+    for pattern, reason in DANGEROUS_CLICK_LABELS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return Danger(reason)
     return None
 
 

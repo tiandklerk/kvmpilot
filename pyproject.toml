@@ -17,6 +17,14 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+# optional: click-target safety check (hid.click(check_label=True)) — OCRs a
+# small crop around the click point to catch a destructive-looking GUI button
+# (e.g. "Install Now", "Restart & Update") before clicking it. Needs the
+# tesseract-ocr system package too (apt/brew install tesseract-ocr); the check
+# degrades to a clear error, not a silent no-op, if either is missing.
+ocr = [
+    "pytesseract>=0.3.10",
+]
 
 [project.scripts]
 pikvm = "pikvm_agent.cli:main"

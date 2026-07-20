@@ -43,6 +43,50 @@ def test_dangerous_combo_detected():
     assert guard.scan_combo(["ControlLeft", "KeyS"]) is None
 
 
+# -- click-target label scanning (mouse clicks carry no text of their own to
+# scan, so this is the only way to gate one — see click_guard.py) -----------
+
+@pytest.mark.parametrize("label", [
+    "Install Now",
+    "  restart now  ",
+    "Restart & Update",
+    "Restart and Update",
+    "Reboot Now",
+    "Shut Down Now",
+    "Shutdown Now",
+    "Power Off Now",
+    "Factory Reset",
+    "Reset this PC",
+    "Format Disk",
+    "Wipe Device",
+    "Erase All Content",
+    "Delete Permanently",
+    "Delete Account",
+    "Empty Trash",
+    "Yes, delete",
+    "Confirm Deletion",
+    "Uninstall",
+    "Remove Everything",
+])
+def test_dangerous_click_labels_matched(label):
+    assert guard.scan_click_label(label) is not None, f"{label!r} should be flagged"
+
+
+@pytest.mark.parametrize("label", [
+    "Remove from cart",       # single-word "remove" alone must NOT match
+    "Delete",                 # bare "delete" alone must NOT match
+    "Reset filters",          # bare "reset" alone must NOT match
+    "Restart the tutorial",   # "restart" without "now"/"& update" must NOT match
+    "Save changes",
+    "OK",
+    "Cancel",
+    "Add to basket",
+    "",
+])
+def test_benign_labels_not_flagged(label):
+    assert guard.scan_click_label(label) is None, f"{label!r} should NOT be flagged"
+
+
 # -- token lifecycle -----------------------------------------------------------
 
 def test_require_confirmation_blocks_then_confirms(mock_device):

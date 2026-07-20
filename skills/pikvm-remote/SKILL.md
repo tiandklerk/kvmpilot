@@ -139,6 +139,17 @@ Dangerous actions are **blocked** and exit with code 3 and a token:
 - the Ctrl+Alt+Del power chord;
 - any `pikvm atx power|power_long|reset`.
 
+**Mouse clicks are the gap.** A click carries no text, so it is *not*
+scanned by default — clicking "Install Now" on a restart dialog, or a
+"Format"/"Delete Account" button, goes straight through unless you stop it
+yourself. Before a click you're not confident about: read the label from
+your last screenshot and judge it, or add `--check-label` (CLI) /
+`check_label=true` (MCP) to have the harness OCR the area first and block
+it exactly like a dangerous typed command if it reads as destructive. This
+needs an optional dependency (`pip install -e ".[ocr]"` + the
+`tesseract-ocr` system package); if it's missing the click errors instead
+of silently going through unchecked — it never fails open.
+
 When you hit exit code 3: **stop, show the user the exact blocked action and
 the token, and ask for explicit approval.** Only after they approve, run
 `pikvm confirm <TOKEN>` (or re-run with `--confirm <TOKEN>`). Never invent or

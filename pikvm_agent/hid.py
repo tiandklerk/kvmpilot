@@ -171,6 +171,26 @@ def mouse_move(client: PiKvmClient, x: float, y: float, ws: HidWebSocket | None 
         time.sleep(FLUSH_DELAY)
 
 
+CLICK_LABEL_CROP = (240, 90)  # (w, h) region OCR'd around a click point when check_label=True
+
+
+def _check_click_label(client: PiKvmClient, x: float, y: float, confirm_token: str | None) -> None:
+    """OCR a small crop around (x, y) and gate the click if it reads as a
+    destructive control. Mouse actions carry no text of their own to scan, so
+    this is opt-in (costs an extra capture) rather than the default — see
+    click_guard.py and DANGEROUS_CLICK_LABELS."""
+    from . import click_guard, screen
+
+    cw, ch = CLICK_LABEL_CROP
+    box = (max(0, int(x - cw / 2)), max(0, int(y - ch / 2)), cw, ch)
+    snap = screen.capture(client, crop=box)
+    text = click_guard.read_click_region(snap.jpeg)  # raises click_guard.OcrUnavailable, not swallowed
+    danger = guard.scan_click_label(text)
+    if danger is not None:
+        guard.require_confirmation(
+            f"click:{danger.reason} @ ({int(x)},{int(y)})", danger.reason, confirm_token)
+
+
 def click(
     client: PiKvmClient,
     button: str = "left",
@@ -179,9 +199,13 @@ def click(
     double: bool = False,
     ws: HidWebSocket | None = None,
     human: bool | None = None,
+    check_label: bool = False,
+    confirm_token: str | None = None,
 ) -> None:
     if button not in ("left", "right", "middle"):
         raise PiKvmError(f"unknown mouse button {button!r}")
+    if check_label and x is not None and y is not None:
+        _check_click_label(client, x, y, confirm_token)
     ensure_absolute_mouse(client)
     w, h = get_resolution(client)
     hu = _use_human(human)
@@ -338,7 +362,8 @@ def run_sequence(client: PiKvmClient, actions: list[dict],
                 results.append(f"move ({a['x']},{a['y']})")
             elif kind == "click":
                 click(client, a.get("button", "left"), a.get("x"), a.get("y"),
-                      double=a.get("double", False), ws=sock, human=a.get("human"))
+                      double=a.get("double", False), ws=sock, human=a.get("human"),
+                      check_label=a.get("check_label", False), confirm_token=confirm_token)
                 results.append(f"{a.get('button', 'left')} click")
             elif kind == "drag":
                 drag(client, a["x1"], a["y1"], a["x2"], a["y2"], ws=sock, human=a.get("human"))

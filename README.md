@@ -23,6 +23,10 @@ written to an audit log.
 uv venv && uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
 ```
 
+Optional: `.[ocr]` (+ `apt install tesseract-ocr` / `brew install tesseract`)
+enables `click --check-label`, a safety check that OCRs a click target before
+clicking it — see [Guardrails](#guardrails).
+
 ## Configure the device
 
 Fastest path — the onboarding wizard:
@@ -184,15 +188,44 @@ a human to approve):
 - an `Enter` that would execute a dangerous command already typed (a rolling
   buffer of recent keystrokes catches the type-then-Enter split);
 - the Ctrl+Alt+Del power chord;
-- all ATX power actions.
+- all ATX power actions;
+- optionally, a mouse click landing on a destructive-looking GUI control
+  (`click --check-label`, or `check_label=true` via MCP) — see below.
 
-Audit log and guard state live under `~/.local/state/pikvm-agent/`.
+The confirm-token is never written to disk in recoverable form (only its
+sha256 hash is persisted, `pending.json` is `chmod 600`, the state dir is
+`chmod 700`) — it exists in plaintext only in the response the human is meant
+to see. Audit log and guard state live under `~/.local/state/pikvm-agent/`.
+
+**Mouse clicks are unguarded by default.** Unlike typed text, a click carries
+no string to scan, so clicking a destructive button (an installer's "Install
+Now", a "Format", a delete confirmation) normally goes straight through — this
+was found live, clicking past exactly such a dialog with nothing to stop it.
+Pass `--check-label` (CLI) / `check_label=true` (MCP `mouse_click`/`run_actions`)
+to have the harness OCR a small region around the click point first and block
+it, same as a dangerous typed command, if it reads as one of a curated set of
+destructive control labels (`pikvm_agent/guard.py:DANGEROUS_CLICK_LABELS`).
+This needs the optional `ocr` extra (`pip install -e ".[ocr]"`, i.e.
+pytesseract) plus the `tesseract-ocr` system package; if either is missing the
+click **errors rather than silently proceeding unchecked** — it fails closed,
+never open. It's heuristic and English-pattern-based: an icon-only button, a
+non-English label, or a control just outside the checked region isn't caught,
+so it's one more layer, not a guarantee — costs one extra look, so reach for it
+before an uncertain click, not on every click.
+
+If the HTTP transport (`pikvm mcp --http`) is used, set `PIKVM_MCP_TOKEN` (or
+`--token`) — it has no authentication of its own otherwise; see
+[Hosting the MCP server](#hosting-the-mcp-server) above.
 
 Residual risk: an agent could type a dangerous command one character at a time
-via `key` events to dodge text scanning. The Enter-evasion buffer mitigates the
-common case, and the audit log records everything; treat the confirm-token
-prompt as the real safety boundary and keep a human in the loop for power
-actions.
+via `key` events to dodge text scanning; the harness's own guardrails are
+enforced client-side, so anything with independent access to the target's
+credentials (e.g. an agent that also has shell access alongside `pikvm`) could
+bypass this layer entirely by calling the device's API directly. The
+Enter-evasion buffer mitigates the common typing case, and the audit log
+records everything; treat the confirm-token prompt as the real safety boundary
+and keep a human in the loop for power actions and anything you haven't
+verified check_label for.
 
 ## Development
 
