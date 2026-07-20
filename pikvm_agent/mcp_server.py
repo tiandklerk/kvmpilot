@@ -24,7 +24,48 @@ from . import guard, hid, screen
 from .client import PiKvmClient, PiKvmError
 from .config import load_config
 
-mcp = FastMCP("pikvm")
+# Server-level guidance sent to every MCP client on connect (any agent, any
+# framework), so the loop discipline travels WITH the tools — not just in a
+# Claude Code skill. This is what keeps agents out of the re-look/verify loops
+# that waste the time budget on tasks a human finds trivial.
+INSTRUCTIONS = """\
+This server operates a real computer through a PiKVM: you SEE it only as screenshots and \
+ACT only through mouse/keyboard. Nothing runs on the target. Work in a tight perceive-act \
+loop; the main failure mode is re-looking at the same thing many times and running out of time.
+
+Core loop — never act blind:
+1. LOOK: `screenshot` returns the frame plus a text line with its pixel dimensions. Click and \
+crop coordinates are in that pixel space, and it is stable across captures.
+2. DECIDE one or a few actions from what you see.
+3. ACT: mouse_click / type_text / run_actions.
+4. VERIFY: screenshot again (use settle=true after something animates) before the next step. \
+Do not chain several blind inputs.
+
+Spend screenshots wisely — this is where time is lost:
+- Classify from ONE full frame when you can. Full frames are delivered at native resolution and \
+are legible; do NOT reach for a crop by default.
+- Use crop=[x,y,w,h] only to re-read a single genuinely-ambiguous spot you've already located. \
+Each crop is another round-trip. If your own image input downscales large frames, a native crop \
+of the region preserves detail — but still budget crops; two analysis passes can eat a timer.
+- BATCH with run_actions: it runs a whole sequence over one connection, and with screenshot=true \
+returns the verification frame in the SAME call — one round-trip, not many. Ideal for clicking \
+several targets then seeing the result at once.
+
+Timed or multi-target UIs (dialogs, image grids): capture once, decide EVERY action, batch them, \
+verify once. Re-looking per element is the primary way to run out of time. Note batching a final \
+confirm is blind — fine for a static target, risky if the UI can change between clicks.
+
+Before committing: verify typed text on screen before pressing Enter; for a click beside a control \
+you must not hit, move+verify then click.
+
+Safety: dangerous actions (power, destructive commands, Ctrl+Alt+Del) are blocked and return a \
+one-time token — show it to the human and call confirm_action only after they approve. Never \
+self-confirm.
+
+set_mouse_humanize(true) makes cursor motion natural for UIs that flag robotic input; it is \
+behavioural-only and slower, so leave it off for ordinary work."""
+
+mcp = FastMCP("pikvm", instructions=INSTRUCTIONS)
 
 # One warm, authenticated client for the whole server lifetime. Holding its
 # persistent WebSocket open keeps kvmd's streamer awake, so screenshots skip the
