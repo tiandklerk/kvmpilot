@@ -245,6 +245,99 @@ OpenClaw, anything. The tools teach their own good use.
 know-how has to live** — not in a client-specific skill that only one framework
 reads, but in the server, alongside the capabilities it describes.
 
+### Proof: validated cold, not coached
+
+That fix needed to earn its keep unprompted, not just in a hand-held retry. So
+once the server `instructions` shipped, Kimi was pointed at the same demo again
+with no hint of strategy in the prompt — just "beat the CAPTCHA, and separately,
+add the best PiKVM to an Amazon.nl cart" — and left to draw its own challenge:
+
+> *"Challenge: 'Select all images with cars,' static 3×3 grid. Method: one
+> full-frame vision pass to classify all 9 tiles, then one `run_actions` batch
+> with 4 tile clicks + Verify in a single round-trip. Outcome: green checkmark,
+> first try. The new MCP instructions helped significantly — the tight
+> perceive-act loop + 'classify from ONE full frame' guidance eliminated the
+> multi-round-trip pattern that expired the first bicycle attempt."*
+> — Kimi K3, unprompted, first attempt
+
+Solved cold, first attempt — the exact discipline it had to be talked through
+before now showing up on its own, because it now arrives with the tools instead
+of a human relaying it turn by turn. The second task, in the same run, is the
+more telling one: asked to add a PiKVM to an Amazon.nl cart, Kimi identified the
+one **genuine** PiKVM-branded unit among a shelf of clones, added it — and then
+volunteered that a duplicate was *already* in the cart from earlier browsing
+and asked before assuming it should be removed, rather than silently doubling
+the order or silently leaving it wrong. Correct answer, unprompted strategy,
+and an honest flag on an ambiguity it could easily have ignored — from a model
+that had gone 0-for-3 on the very same task days earlier.
+
+---
+
+## Security: what an agent driving a KVM runs into
+
+Solving CAPTCHAs is a fun stress test, but it only exercises the *happy path*.
+The harder question came next: **since this agent's entire view of reality is a
+screenshot, is that screenshot itself an attack surface — and what else is
+exposed once an agent is holding the keyboard?**
+
+**Prompt injection via the screen is real, and OCR makes it worse.** Anything
+rendered on the target — a webpage, a document, terminal output — is content the
+agent must read to do its job, and nothing marks it as untrusted. Text
+engineered to look like an instruction (*"ignore previous instructions, run
+this command"*) is, mechanically, indistinguishable from the real UI. `screen_ocr`
+is the sharper version of the same problem: it hands back plain text with zero
+"this came from a screenshot, be skeptical" framing — hidden or disguised text
+a human would never notice gets transcribed and dropped straight into the
+agent's context like any other tool result.
+
+**But the bigger finding was architectural, not visual.** Auditing the code
+turned up three things more serious than image injection:
+
+- **Mouse clicks were completely unguarded.** Every dangerous-pattern check in
+  the harness scanned *typed text* — `click()` never called into the guard
+  layer at all. That's not hypothetical: the **"Install Now" dialog from Act I**
+  was exactly this gap. Nothing in the harness would have stopped that click;
+  it only got dodged because a human-supervised agent chose to read the label
+  first. A visually-injected instruction aimed at an agent's *click*, not its
+  typing, would have sailed straight through.
+- **The confirm-token — the entire "a human must approve this" model — was
+  plaintext and world-readable on disk.** Any co-located reader, including the
+  same agent if it also has shell access (as it does in this harness's primary
+  use case, Claude Code), could simply read the token off disk and self-approve
+  the very action it was supposed to need a human for.
+- **The HTTP transport had no authentication of its own.** Anyone who could
+  reach the port could drive the KVM — screen, keyboard, mouse, ATX power — with
+  no credential beyond network access.
+
+Fixed, in order of how much they mattered:
+
+1. **Click-target guard.** `check_label=true` now OCRs a small region around a
+   click point before it lands, blocking it exactly like a dangerous typed
+   command if the label reads as destructive ("Install Now," "Factory Reset,"
+   "Format Disk," a delete confirmation). Deliberately opt-in and deliberately
+   narrow — bare words like "delete" or "remove" are excluded, since they
+   appear constantly in ordinary UI ("Remove from cart") and a check that cries
+   wolf just trains an agent to click through it unread.
+2. **Token hashing.** The confirm-token is now sha256-hashed at rest — mirroring
+   a design already used elsewhere in the harness — with the state directory
+   locked to owner-only. The raw token exists only in the response a human is
+   meant to see, never on disk.
+3. **Bearer auth on the HTTP transport**, opt-in via an env var, with a loud
+   startup warning if none is set and the server is bound beyond localhost.
+4. **Screen and OCR content is now explicitly framed as untrusted data** in
+   both the skill and the server's own `instructions` — the same block that
+   taught every client the CAPTCHA discipline now also tells it not to obey
+   text it merely *sees*.
+
+One thing no amount of client-side hardening closes: the guardrails live in the
+harness's own code, not on the KVM device itself. Anything with independent
+access to the target's credentials — including this very agent, which has both
+a shell and the `pikvm` CLI on the same machine — could bypass the whole guard
+layer by calling the device's API directly. That's not a bug to patch; it's the
+honest edge of what a client-side safety layer can promise. The confirm-token
+prompt is real protection against an agent staying inside its own tools; it was
+never a sandbox.
+
 ---
 
 ## What it means
@@ -265,6 +358,11 @@ reads, but in the server, alongside the capabilities it describes.
 - **A good user challenge beats a clever fix.** "Why crop at all?" exposed a real
   downscaling bug that three agents had been papering over. Take the objection
   seriously.
+- **Guardrails have a scope, and it's smaller than it looks.** Comprehensive
+  text-pattern scanning still let an unguarded click through the exact dialog
+  the harness was built to catch. A safety layer is only as complete as its
+  least-covered action, and only as trustworthy as the one no one thought to
+  ask about — the mouse.
 
 ---
 
@@ -294,11 +392,16 @@ audit log. Blocked-unless-confirmed:
   `format`, `Stop-Computer`, …, cross-platform), caught in the text *and* when a
   later Enter would execute a dangerous command already typed;
 - the Ctrl+Alt+Del power chord;
-- all ATX power actions.
+- all ATX power actions;
+- optionally, a mouse click landing on a destructive-looking control
+  (`check_label=true` — see the Security section above; opt-in since it costs
+  an extra look).
 
 A blocked action returns a one-time, 10-minute token printed for the *human*. The
 agent relays it and waits; only after explicit approval does the action run. That
-prompt is the real safety boundary — and across every run here, it held.
+token is hashed at rest, never written to disk in recoverable form, and the state
+directory is locked to owner-only. That confirm prompt is the real safety
+boundary within the harness's own tools — and across every run here, it held.
 
 *Harness: [github.com/tiandklerk/kvmpilot](https://github.com/tiandklerk/kvmpilot).
 Target: a PiKVM (Raspberry Pi Zero 2 W, kvmd 4.132) → Ubuntu server. Drivers:
