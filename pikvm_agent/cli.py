@@ -561,9 +561,10 @@ def main(argv: list[str] | None = None) -> int:
             return args.func(client, args)
     except guard.GuardError as e:
         print(f"\n{e}", file=sys.stderr)
-        print(f"\nTo proceed, a human must approve this. Confirm with:\n"
-              f"    pikvm{' --mock' if args.mock else ''} confirm {e.token}\n"
-              f"(token valid for {guard.TOKEN_TTL // 60} minutes)", file=sys.stderr)
+        if e.token:
+            print(f"\nTo proceed, a human must approve this. Confirm with:\n"
+                  f"    pikvm{' --mock' if args.mock else ''} confirm {e.token}\n"
+                  f"(token valid for {guard.TOKEN_TTL // 60} minutes)", file=sys.stderr)
         return EXIT_BLOCKED
     except PiKvmError as e:
         print(f"error: {e}", file=sys.stderr)

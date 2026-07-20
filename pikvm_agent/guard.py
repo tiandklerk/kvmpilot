@@ -15,9 +15,12 @@ STATE_DIR the module reads at call time, so tests can isolate it).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import re
 import secrets
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,9 +66,11 @@ DANGEROUS_COMBOS = [
 
 
 class GuardError(Exception):
-    """Raised when an action is blocked pending confirmation."""
+    """Raised when an action is blocked pending confirmation. `token` is None
+    when a confirmation is already pending for this exact action — see
+    require_confirmation() for why it can't be redisplayed in that case."""
 
-    def __init__(self, message: str, token: str, reason: str):
+    def __init__(self, message: str, token: str | None, reason: str):
         super().__init__(message)
         self.token = token
         self.reason = reason
@@ -79,7 +84,15 @@ class Danger:
 def _state_dir() -> Path:
     d = config.STATE_DIR
     d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.chmod(0o700)  # owner-only: pending.json/audit.log live here
+    except OSError:
+        pass
     return d
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _pending_path() -> Path:
@@ -157,20 +170,35 @@ def enter_would_execute_danger() -> Danger | None:
 def require_confirmation(action: str, reason: str, supplied_token: str | None) -> None:
     """Gate a dangerous action. If `supplied_token` matches a live pending
     token for this action, consume it and return (allowed). Otherwise issue
-    a new token, persist it, audit the block, and raise GuardError."""
+    a new token, persist only its hash, audit the block, and raise GuardError.
+
+    The raw token is returned to the caller here and NEVER written to disk —
+    only its sha256 is persisted (mirrors the enrollment pairing token), so a
+    plain read of the state file (another local user, a backup, a monitoring
+    agent scraping state dirs) cannot recover it. This means a genuine retry of
+    the SAME action while a token is already pending cannot redisplay that
+    token (we no longer have the plaintext to show) — it instead reports that
+    one is already pending, without inventing a new one that would silently
+    invalidate what the human already has.
+    """
     if supplied_token and _consume_token(action, supplied_token):
         audit(action, "confirmed", reason)
         return
 
-    # Reuse a live token for the same action so repeated blocked attempts
-    # (e.g. an agent retrying) don't invalidate the token already handed to
-    # the user. A wrong token for the same action is ignored, not accepted.
     existing = peek_pending()
     if existing and existing.get("action") == action:
-        token = existing["token"]
-    else:
-        token = secrets.token_hex(3)  # 6 hex chars
-        _write_pending(action, reason, token)
+        audit(action, "blocked", reason)
+        remaining = max(0, int(existing["expires"] - time.time()))
+        raise GuardError(
+            f"BLOCKED: {reason}. A confirmation token was already issued for "
+            f"this exact action and is still valid for {remaining}s — relay "
+            "the token from that earlier response; it isn't re-shown here.",
+            token=None,
+            reason=reason,
+        )
+
+    token = secrets.token_hex(3)  # 6 hex chars — shown here once, never persisted
+    _write_pending(action, reason, token)
     audit(action, "blocked", reason)
     raise GuardError(
         f"BLOCKED: {reason}. This action is dangerous and needs confirmation.",
@@ -180,10 +208,15 @@ def require_confirmation(action: str, reason: str, supplied_token: str | None) -
 
 
 def _write_pending(action: str, reason: str, token: str) -> None:
-    _pending_path().write_text(json.dumps({
-        "action": action, "reason": reason, "token": token,
+    path = _pending_path()
+    path.write_text(json.dumps({
+        "action": action, "reason": reason, "token_hash": _token_hash(token),
         "expires": time.time() + TOKEN_TTL,
     }))
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def _consume_token(action: str, token: str) -> bool:
@@ -194,7 +227,9 @@ def _consume_token(action: str, token: str) -> bool:
         data = json.loads(path.read_text())
     except (ValueError, OSError):
         return False
-    if data.get("token") != token or data.get("action") != action:
+    if data.get("action") != action:
+        return False
+    if not hmac.compare_digest(data.get("token_hash", ""), _token_hash(token)):
         return False
     if time.time() > data.get("expires", 0):
         return False
@@ -203,7 +238,9 @@ def _consume_token(action: str, token: str) -> bool:
 
 
 def peek_pending() -> dict | None:
-    """The pending action for a bare `pikvm confirm <token>` to resolve."""
+    """The pending action's action/reason/expiry — never the token, which is
+    only ever held in-memory at the moment it's minted (see
+    require_confirmation), not persisted in recoverable form."""
     path = _pending_path()
     if not path.exists():
         return None

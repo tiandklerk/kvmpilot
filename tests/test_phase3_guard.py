@@ -2,6 +2,7 @@
 evasion, ATX gating, audit log."""
 
 import json
+import re
 import time
 
 import pytest
@@ -58,6 +59,41 @@ def test_require_confirmation_blocks_then_confirms(mock_device):
         guard.require_confirmation("type:sudo reboot", "reboot command", token)
 
 
+def test_pending_state_never_holds_the_plaintext_token(mock_device):
+    with pytest.raises(guard.GuardError) as ei:
+        guard.require_confirmation("type:sudo reboot", "reboot command", None)
+    token = ei.value.token
+    raw = (config.STATE_DIR / "pending.json").read_text()
+    assert token not in raw            # plaintext never hits disk
+    assert "token_hash" in raw         # only the hash is persisted
+    pending = guard.peek_pending()
+    assert "token" not in pending and "token_hash" in pending
+
+
+def test_pending_file_and_state_dir_are_owner_only(mock_device):
+    guard.audit("noop", "executed")  # ensures the state dir exists
+    assert (config.STATE_DIR.stat().st_mode & 0o777) == 0o700
+    with pytest.raises(guard.GuardError):
+        guard.require_confirmation("atx:reset", "reset", None)
+    pending_path = config.STATE_DIR / "pending.json"
+    assert (pending_path.stat().st_mode & 0o777) == 0o600
+
+
+def test_retry_of_same_action_reports_pending_without_a_token(mock_device):
+    with pytest.raises(guard.GuardError) as first:
+        guard.require_confirmation("type:sudo reboot", "reboot command", None)
+    original_token = first.value.token
+    assert original_token is not None
+    # retrying the SAME action while it's still pending must not mint (or try
+    # to redisplay) a token — only its hash exists, so it can't be recovered
+    with pytest.raises(guard.GuardError) as second:
+        guard.require_confirmation("type:sudo reboot", "reboot command", None)
+    assert second.value.token is None
+    assert "already" in str(second.value).lower()
+    # the ORIGINAL token, from the first response, still works
+    guard.require_confirmation("type:sudo reboot", "reboot command", original_token)
+
+
 def test_token_expiry(mock_device, monkeypatch):
     monkeypatch.setattr(guard, "TOKEN_TTL", -1)  # already expired when written
     with pytest.raises(guard.GuardError) as ei:
@@ -99,9 +135,12 @@ def test_cli_type_blocks_and_confirm_executes(mock_device, capsys):
     assert rc == 3
     err = capsys.readouterr().err
     assert "BLOCKED" in err
+    # the token is shown only in the blocked response, never persisted in
+    # recoverable form (guarded against a plain read of state) — extract it
+    # from the actual output, the same way a human/agent would.
+    token = re.search(r"confirm ([0-9a-f]{6})", err).group(1)
     pending = guard.peek_pending()
-    assert pending is not None
-    token = pending["token"]
+    assert pending is not None and "token" not in pending  # only a hash is stored
     assert main(["--mock", "confirm", token]) == 0
     # the reboot text reached the mock via hid_print after confirmation
     kinds = [e.get("text") for e in mock_device.events() if e["kind"] == "hid_print"]
@@ -110,8 +149,9 @@ def test_cli_type_blocks_and_confirm_executes(mock_device, capsys):
 
 def test_cli_atx_guarded(mock_device, capsys):
     assert main(["--mock", "atx", "reset"]) == 3
-    assert "BLOCKED" in capsys.readouterr().err
-    token = guard.peek_pending()["token"]
+    err = capsys.readouterr().err
+    assert "BLOCKED" in err
+    token = re.search(r"confirm ([0-9a-f]{6})", err).group(1)
     assert main(["--mock", "atx", "reset", "--confirm", token]) == 0
     assert any(e["kind"] == "atx_click" and e["button"] == "reset" for e in mock_device.events())
 

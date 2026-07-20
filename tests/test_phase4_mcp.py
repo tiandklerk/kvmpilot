@@ -1,6 +1,7 @@
 """Phase 4: MCP tools call through the same core against the mock device."""
 
 import asyncio
+import re
 
 from mcp.types import ImageContent, TextContent
 
@@ -45,7 +46,9 @@ def test_dangerous_type_blocked_then_confirmed(mock_device):
     contents = result[0] if isinstance(result, tuple) else result
     text = " ".join(c.text for c in contents if isinstance(c, TextContent))
     assert "BLOCKED" in text
-    token = guard.peek_pending()["token"]
+    # the token is shown only in this response, never persisted in recoverable
+    # form — extract it the same way the calling agent must.
+    token = re.search(r'token "([0-9a-f]{6})"', text).group(1)
     _call("confirm_action", token=token)
     assert any(e["kind"] == "hid_print" and e["text"] == "sudo reboot"
                for e in mock_device.events())
