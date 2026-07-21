@@ -197,6 +197,11 @@ more, and it's slower (~1s/click), so it's a deliberate trade against the timer.
 
 ### Three models, one pattern
 
+This is the diagnostic snapshot from the *unfixed* harness — the state that
+sent us looking for the loop-latency, coordinate, and know-how bugs above. It's
+a fixed point in the story, not the final scoreboard; see below for how each of
+these numbers moved once the fixes landed.
+
 | Model | Vision | Outcome | Limited by |
 |-------|--------|---------|-----------|
 | **Opus 4.8** | ✓ solid | Solves static grids reliably (cars, motorcycles) | — |
@@ -340,6 +345,43 @@ never a sandbox.
 
 ---
 
+## The last mile: precision, not perception
+
+With the infrastructure work done — warm session, stable coordinates, the
+playbook shipping with the tools, the security pass — there was one honest
+question left: run it again, change nothing, and see what's still hard. Sonnet
+took the fully-fixed harness at a "select all images with buses / cars"
+challenge that kept recurring, and needed five rounds to close it out:
+
+| Round | What happened |
+|---|---|
+| 1 | Tiles identified correctly — but the click meant for **Verify** landed on a grid tile instead. Expired. |
+| 2 | Tiles identified correctly — the Verify click landed on the **info icon**. Expired. |
+| 3 | A genuine analysis error: selected a bus tile, missed real cars. Explicit "please try again." |
+| 4 | Correct analysis — but Verify was left out of the batch entirely. Expired. |
+| 5 | Correct analysis, Verify included in the same batched call. **Solved.** |
+
+Only round 3 was a vision failure. The other three losses were **misclicks and
+a forgotten step** — the same shape of mistake a rushed person makes, not a
+tool malfunctioning. Sonnet's own diagnosis matches exactly:
+
+> *"The main difficulty wasn't the image recognition itself — it was UI
+> precision. The Verify button's position shifted slightly between challenge
+> states, and a couple of my clicks aimed at it landed on an adjacent tile or
+> the help icon instead, which reset the challenge's timer and forced retries.
+> Once I batched 'select tiles + click Verify' into a single precise action,
+> it went through cleanly."*
+
+That's the honest final shape of this project. The infrastructure bugs — the
+twelve-second screenshot, the coordinate drift, the missing playbook — are all
+gone, and every model here reads the tiles correctly, every time. What's left
+once perception and plumbing are solved is something closer to **care**: did
+this particular pass line up a click precisely, and did it remember every step
+of what it meant to do. That's not a harness defect to patch — it's the same
+axis humans vary on, and apparently agents do too.
+
+---
+
 ## What it means
 
 - **Latency is a capability, not a comfort.** On timed tasks, the speed of the
@@ -363,6 +405,11 @@ never a sandbox.
   the harness was built to catch. A safety layer is only as complete as its
   least-covered action, and only as trustworthy as the one no one thought to
   ask about — the mouse.
+- **Once infrastructure and know-how stop being the bottleneck, precision is.**
+  The last failures weren't about seeing or knowing what to do — they were
+  misclicks and a skipped step. That's not a harness bug left to fix; it's the
+  same variance that shows up in a person having an off day, and it's a
+  reasonable place for this experiment to end.
 
 ---
 
