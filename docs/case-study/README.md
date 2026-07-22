@@ -1,9 +1,10 @@
-# The Agent at the End of a USB Cable
+# Well, Looks Like Working From Home Is Over
 
-*Giving an LLM a screen, a keyboard, and a mouse — and nothing else — to operate
-a real computer through a [PiKVM](https://pikvm.org). What three different models
-could and couldn't do, the bugs a deceptively simple task exposed, and the one
-lesson that outlasts all of them: where an agent's know-how belongs.*
+*The Agent at the End of a USB Cable: giving an LLM a screen, a keyboard, and
+a mouse — and nothing else — to operate a real computer through a
+[PiKVM](https://pikvm.org). What three different models could and couldn't
+do, the bugs a deceptively simple task exposed, and the one lesson that
+outlasts all of them: where an agent's know-how belongs.*
 
 ---
 
@@ -23,6 +24,17 @@ Because the agent works purely from pixels and USB, the target can run Windows,
 macOS, or Linux, and needs no agent, no driver, no cooperation. The same
 interface works when a machine is at a BIOS screen, a boot menu, or a kernel
 panic — states where no in-OS agent could ever run.
+
+Pull back from the mechanics and the implication gets blunter: this is a
+general-purpose way to operate **any** system with a screen and a keyboard —
+no install, no API integration, no cooperation from whatever's running on the
+other end. It doesn't matter what the software is or whether anyone ever
+intended it to be automated; if a human could click through it, this can. The
+unsettling part isn't that a frontier model can pull this off — it's how
+little that actually takes. Every model in this piece managed it, including
+ones nobody would call cutting-edge. Imitating a human well enough to open a
+browser, read a dialog, and click the right button turns out not to demand
+much intelligence at all.
 
 The harness exposes itself as an **MCP server**, so any MCP-capable agent —
 Claude Code, or Hermes running a different model entirely — can drive the machine
