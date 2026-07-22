@@ -53,7 +53,11 @@ Each crop is another round-trip. If your own image input downscales large frames
 of the region preserves detail — but still budget crops; two analysis passes can eat a timer.
 - BATCH with run_actions: it runs a whole sequence over one connection, and with screenshot=true \
 returns the verification frame in the SAME call — one round-trip, not many. Ideal for clicking \
-several targets then seeing the result at once.
+several targets then seeing the result at once. When the thing you're verifying is small (a \
+captcha widget, a dialog), pass crop=[x,y,w,h] with it too — an uncropped verification frame \
+measured ~6x larger (a full desktop capture is ~100k+ characters of image data vs ~20k for a \
+captcha-sized crop) and risks some clients' tool-output limits for no benefit if you only needed \
+to see one widget.
 
 Timed or multi-target UIs (dialogs, image grids): capture once, decide EVERY action, batch them, \
 verify once. Re-looking per element is the primary way to run out of time. Note batching a final \
@@ -339,7 +343,13 @@ def run_actions(actions: list[dict], confirm_token: str | None = None,
     Set screenshot=True to get a verification frame back in the same call (with
     optional crop=[x,y,w,h], and settle=True to wait for the screen to stop
     changing first) — so "click these tiles, then show me" is one round-trip,
-    not several. Ideal for timed, multi-target UIs like image-grid captchas."""
+    not several. Ideal for timed, multi-target UIs like image-grid captchas.
+
+    If you're verifying a small element (a captcha widget, a dialog) PASS crop
+    — an uncropped full-frame verification measured ~6x larger in testing
+    (~115k chars vs ~19k cropped to a captcha-sized region) and risks some
+    clients' tool-output limits. Omitting crop is fine when you genuinely need
+    to see the whole screen (e.g. confirming a page navigated)."""
     try:
         results = _with_session(
             lambda c: hid.run_sequence(c, actions, confirm_token=confirm_token,
@@ -356,7 +366,14 @@ def run_actions(actions: list[dict], confirm_token: str | None = None,
         if settle:
             return screen.wait_until_stable(c, crop=box)[0]
         return screen.capture(c, crop=box)
-    return [TextContent(type="text", text=text), *_capture_result(_with_session(cap))]
+    out = [TextContent(type="text", text=text), *_capture_result(_with_session(cap))]
+    if box is None:
+        out.append(TextContent(type="text", text=(
+            "tip: this verification frame is the full uncropped screen (larger "
+            "payload). If you're checking a small element like a captcha widget "
+            "or dialog, pass crop=[x,y,w,h] next time — same info, a fraction "
+            "of the size.")))
+    return out
 
 
 @mcp.tool()

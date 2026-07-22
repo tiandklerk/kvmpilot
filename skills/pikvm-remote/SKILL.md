@@ -59,8 +59,12 @@ still applies, but **collapse the round-trips**:
    separate screenshot per tile to double-check — that per-look latency is what
    blows the timer (it's the single most common reason these fail).
 2. **Batch the clicks, verify once.** Use `run_actions` with `screenshot=true`
-   (and a `crop`) to click every target *and* get the result frame back in **one
-   call**: e.g. click four tiles then see the grid — one round-trip, not five.
+   **and a `crop`** to click every target *and* get the result frame back in
+   **one call**: e.g. click four tiles then see the grid — one round-trip, not
+   five. Include the crop — an uncropped verification frame on a full desktop
+   measured ~6x larger than one scoped to a captcha widget (~100k+ characters
+   of image data vs ~20k), which risks tripping some clients' tool-output
+   limits for no benefit when you only needed to see one small element.
 3. **Then** read the returned frame and, if needed, do one more batched pass.
 
 The MCP server keeps a warm connection, so captures are near-instant after the

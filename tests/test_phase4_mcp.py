@@ -19,6 +19,24 @@ def test_tools_listed():
             "system_status", "mouse_move"} <= names
 
 
+def test_run_actions_screenshot_uncropped_gets_size_tip(mock_device):
+    # an uncropped verification frame is legitimately larger; nudge the agent
+    # toward crop for small-widget checks (found live: ~6x smaller cropped)
+    result = _call("run_actions", actions=[{"action": "move", "x": 100, "y": 100}],
+                   screenshot=True)
+    contents = result[0] if isinstance(result, tuple) else result
+    texts = [c.text for c in contents if isinstance(c, TextContent)]
+    assert any("crop=[x,y,w,h]" in t for t in texts)
+
+
+def test_run_actions_screenshot_cropped_no_tip(mock_device):
+    result = _call("run_actions", actions=[{"action": "move", "x": 100, "y": 100}],
+                   screenshot=True, crop=[0, 0, 100, 100])
+    contents = result[0] if isinstance(result, tuple) else result
+    texts = [c.text for c in contents if isinstance(c, TextContent)]
+    assert not any("crop=[x,y,w,h]" in t for t in texts)
+
+
 def test_screenshot_returns_inline_image(mock_device):
     result = _call("screenshot")
     contents = result[0] if isinstance(result, tuple) else result
