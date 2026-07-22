@@ -382,6 +382,44 @@ axis humans vary on, and apparently agents do too.
 
 ---
 
+## The receipts: a real before/after
+
+Three days apart, same demo page, both runs pulled straight from the session
+transcript rather than eyeballed:
+
+| | Before (2026-07-19, pre-fix) | After (2026-07-22, post-fix) |
+|---|---|---|
+| Model | Claude Opus 4.8 | Claude Sonnet 5 |
+| Task | Two full challenges (crosswalks timed out, cars then solved) | Checkbox pass, no image grid drawn |
+| API turns | 71 | 13 |
+| Wall-clock | 10m 16s | 1m 26s |
+| Output tokens | 42,622 | 4,294 |
+
+Read the turn count and the clock first — those are the honest signal. **71
+turns down to 13, ten minutes down to ninety seconds**, and that's exactly
+what the fixes were built to do: fewer round-trips (warm session, batched
+actions), less time spent discovering strategy the harness now hands over on
+connect. That part is real and directly attributable to the work in this
+piece.
+
+The dollar cost is not as clean a story, and it would be dishonest to present
+it as one. Priced at the same nominal rate, the "after" run actually comes out
+*more* expensive (\$9.93 vs \$8.95) — not because anything got worse, but
+because this is a vastly longer, more-compacted conversation by now, so simply
+more accumulated context gets written into cache regardless of the task. Two
+other variables moved at the same time as the harness: the model (Opus then,
+Sonnet now — a discrepancy caught only by checking the transcript, not
+assumed) and the difficulty of the draw itself (two challenges including a
+timeout, versus a clean pass with no grid at all). None of that invalidates
+the turns/clock result, but it does mean this table is a real-world snapshot,
+not a controlled experiment — the one number in this whole piece that *is*
+a clean, single-variable measurement is still the earlier
+`11.75s → 0.10s` warm-screenshot figure, isolated on the same device with
+nothing else changing. Treat this table as the lived confirmation of that
+number, not a replacement for it.
+
+---
+
 ## What it means
 
 - **Latency is a capability, not a comfort.** On timed tasks, the speed of the
