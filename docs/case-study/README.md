@@ -418,6 +418,41 @@ a clean, single-variable measurement is still the earlier
 nothing else changing. Treat this table as the lived confirmation of that
 number, not a replacement for it.
 
+### A third data point, self-reported
+
+A separate Opus session ran the same demo, drew a **bus** challenge, and
+solved it on the first attempt — then, asked to, produced its own metrics by
+reading its own transcript, the same technique used for the table above:
+
+| | |
+|---|---|
+| Model | Claude Opus 4.8 |
+| Challenge | Bus (3×3 grid) |
+| Attempts | 1 |
+| API turns | 31 |
+| Wall-clock | 121.3s |
+| Output tokens | 8,007 |
+
+That's the self-reporting method closing its own loop: told how, an agent can
+find its own usage data and report it accurately without a human parsing logs
+on its behalf — this session correctly declined to guess a per-token price it
+wasn't certain of, exactly as asked. (Priced at this project's own established
+Opus rate, that comes to about \$2.93 — a number filled in after the fact, not
+something the agent claimed itself.) One honesty note carried over from that
+report: its screenshots are labeled reconstructions, not real captures, since
+tool-result image bytes can't be re-embedded into a shareable file the way a
+direct PiKVM screenshot can — every image elsewhere in this piece is a
+genuine capture; that one run's illustrations are not, and it said so itself.
+
+Investigating that report's own side-note — that one `run_actions` reply
+"overflowed the tool-output limit" — turned up a real, fixable pattern rather
+than a one-off: an **uncropped** verification frame measured **six times**
+larger than the same call scoped to the captcha widget (~115,000 characters
+of image data vs. ~19,000), landing close enough to the same ~25,000-token
+ceiling that tripped up an earlier Sonnet run to be a real risk, not a fluke.
+The fix — a same-turn nudge toward `crop` on exactly that tool, at exactly
+the moment an agent omits it — shipped the same day this was found.
+
 ---
 
 ## What it means
