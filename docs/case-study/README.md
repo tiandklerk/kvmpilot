@@ -41,9 +41,9 @@ Claude Code, or Hermes running a different model entirely — can drive the mach
 with typed tools and screenshots returned inline. Dangerous actions are gated
 behind a human-approved confirm-token, and everything is audit-logged.
 
-The test target throughout is deliberately unforgiving: a **live production
-Ubuntu server running my_desktop**. Benign actions only. Nothing that disturbs the
-service.
+The test target throughout is deliberately unforgiving: **a live production
+Ubuntu desktop with real, already-running services** — not a disposable VM.
+Benign actions only. Nothing that disturbs what's running on it.
 
 ---
 
@@ -56,9 +56,9 @@ the basket — stop before payment.* Driver: **Claude Opus 4.8**.
 ### Cold open: read the room from pixels
 
 The first screenshot is the agent's entire worldview — no shell, no context. From
-it alone, Opus identifies the OS (Ubuntu, GNOME), the host
-(`tiandklerk@my_desktop`, read off a terminal prompt), and — from a
-`curl localhost:32400/identity` response in the scrollback — that my_desktop is alive.
+it alone, Opus identifies the OS (Ubuntu, GNOME) from the terminal prompt and
+package-manager output, and confirms — from output already sitting in the
+scrollback — that a real service on the box is alive and running.
 
 ![The agent's first screenshot: an Ubuntu desktop with a terminal and a Software Updater dialog offering "Install Now" with a restart warning](images/01-cold-open.jpg)
 
@@ -538,5 +538,5 @@ boundary within the harness's own tools — and across every run here, it held.
 *Harness: [github.com/tiandklerk/kvmpilot](https://github.com/tiandklerk/kvmpilot).
 Target: a PiKVM (Raspberry Pi Zero 2 W, kvmd 4.132) → Ubuntu server. Drivers:
 Claude Opus 4.8 and Sonnet via Claude Code; Kimi K3 via Hermes on a Raspberry Pi
-5. All actions benign; my_desktop uptime unaffected. CAPTCHA attempts on Google's own
+5. All actions benign; the target's running services were unaffected. CAPTCHA attempts on Google's own
 reCAPTCHA v2 demo page, as a capability test.*
