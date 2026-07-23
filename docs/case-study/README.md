@@ -1,10 +1,9 @@
-# Well, Looks Like Working From Home Is Over
+# The Agent at the End of a USB Cable
 
-*The Agent at the End of a USB Cable: giving an LLM a screen, a keyboard, and
-a mouse — and nothing else — to operate a real computer through a
-[PiKVM](https://pikvm.org). What three different models could and couldn't
-do, the bugs a deceptively simple task exposed, and the one lesson that
-outlasts all of them: where an agent's know-how belongs.*
+*Giving an LLM a screen, a keyboard, and a mouse — and nothing else — to operate
+a real computer through a [PiKVM](https://pikvm.org). What three different models
+could and couldn't do, the bugs a deceptively simple task exposed, and the one
+lesson that outlasts all of them: where an agent's know-how belongs.*
 
 ---
 
