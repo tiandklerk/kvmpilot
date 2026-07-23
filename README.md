@@ -250,3 +250,7 @@ HID/ATX event to a JSONL file so tests assert exact event sequences.
   `[-32768, 32767]` (`kvm = int(px/size*65535 - 32768)`); keyboard via
   `/api/hid/print` (bulk) or per-key WS events.
 - **Power:** `GET /api/atx`, `POST /api/atx/click?button=…`.
+
+## License
+
+[MIT](LICENSE)
