@@ -100,6 +100,17 @@ def test_capture_normalizes_to_host_resolution(mock_device):
     assert screen.cached_full_resolution() == (1920, 1080)
 
 
+def test_host_resolution_falls_back_gracefully_when_streamer_reports_null(mock_device):
+    # kvmd reports {"streamer": null} (not merely an absent key) while the
+    # streamer is idle/waking -- this must not crash, just fall back to None
+    # so callers use the frame's own dimensions instead.
+    mock_device.kvmd.streamer_idle = True
+    with _client() as c:
+        assert screen.host_resolution(c) is None
+        snap = screen.capture(c)  # must not raise
+    assert (snap.width, snap.height) == tuple(mock_device.kvmd.source_resolution)
+
+
 def test_capture_passthrough_when_frame_matches_host(mock_device):
     # frame already matches host res (both 1280×720) -> no re-encode needed
     with _client() as c:

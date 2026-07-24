@@ -61,6 +61,7 @@ class MockKvmd:
         from PIL import Image
         with Image.open(io.BytesIO(self.frame_bytes)) as _im:
             self.source_resolution = list(_im.size)
+        self.streamer_idle = False  # True -> /api/streamer reports streamer:null (idle/waking)
 
     # -- helpers -------------------------------------------------------------
 
@@ -140,6 +141,10 @@ class MockKvmd:
     async def streamer(self, request: web.Request) -> web.Response:
         if err := self._require_auth(request):
             return err
+        if self.streamer_idle:
+            # real kvmd reports this as null while the streamer is idle/waking,
+            # not merely absent -- .get(key, default) doesn't catch that case
+            return web.json_response({"ok": True, "result": {"streamer": None}})
         w, h = self.source_resolution
         return web.json_response({"ok": True, "result": {
             "streamer": {"source": {"online": True, "resolution": {"width": w, "height": h}}}}})

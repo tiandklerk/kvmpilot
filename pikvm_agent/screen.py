@@ -84,12 +84,14 @@ def host_resolution(client: PiKvmClient) -> tuple[int, int] | None:
     if cached is not None:
         return cached
     try:
-        res = (client._get_json("/api/streamer")
-               .get("result", {}).get("streamer", {}).get("source", {}).get("resolution"))
+        result = client._get_json("/api/streamer").get("result") or {}
+        streamer = result.get("streamer") or {}  # kvmd reports this as null while idle/waking
+        source = streamer.get("source") or {}
+        res = source.get("resolution")
         if res and res.get("width") and res.get("height"):
             client._host_res = (int(res["width"]), int(res["height"]))
             return client._host_res
-    except (PiKvmError, KeyError, TypeError, ValueError):
+    except (PiKvmError, KeyError, TypeError, ValueError, AttributeError):
         pass
     return None
 
