@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# ways-of-working: never push directly to main. Everything goes through a branch + PR.
+# Install per-clone with:  git config core.hooksPath hooks
+# This repo is public, so GitHub server-side branch protection also enforces this
+# on the server; the hook is the local first line of defence (and works in clones).
+
+protected="main"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" == "refs/heads/$protected" ]]; then
+    echo "BLOCKED: direct push to '$protected' is not allowed (ways-of-working)." >&2
+    echo "Branch off main, push the branch, and open a PR instead." >&2
+    exit 1
+  fi
+done
+exit 0
